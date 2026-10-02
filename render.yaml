@@ -11,7 +11,6 @@ services:
       - key: REPLICATE_API_TOKEN
         sync: false
       - key: SESSION_SECRET
-        sync: false
         generateValue: true
       - key: STRIPE_SECRET_KEY
         sync: false
