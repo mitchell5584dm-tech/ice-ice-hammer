@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ice Ice Hammer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: composer console left, library right, player rail pinned to the bottom */
+:root{
+  --bg:#0a0f15; --panel:#111922; --raise:#18222d; --line:#233142; --fg:#e4edf5; --muted:#8699ab;
+  --ice:#9adcff; --ice-dim:#2f5770; --spark:#ff7b3d; --spark2:#ffb347; --danger:#ff6b6b; --ok:#6ee7a8;
+  --display:"Big Shoulders Display", Impact, "Arial Narrow", sans-serif;
+  --body:"Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font-family:var(--body);font-size:14px;line-height:1.45;padding-inline:16px;padding-block:16px 120px}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.logo{font-family:var(--display);font-weight:900;font-size:clamp(34px,5vw,52px);line-height:.82;text-transform:uppercase;margin:0}
+.logo .ice{color:var(--ice);display:block}
+.logo .ham{display:block;background:linear-gradient(180deg,var(--spark2),var(--spark));-webkit-background-clip:text;background-clip:text;color:transparent}
+.tag{color:var(--muted);max-width:46ch;font-size:13px;margin:0}
+.banner{border:1px solid color-mix(in srgb,var(--spark) 50%,transparent);background:color-mix(in srgb,var(--spark) 10%,transparent);border-radius:12px;padding:10px 14px}
+.banner code{font-family:var(--mono);font-size:12px}
+.grid{display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:880px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.spread{justify-content:space-between}
+.field{display:flex;flex-direction:column;gap:6px;background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.lbl,.field>label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+textarea,input[type=text],input[type=number]{width:100%;background:transparent;border:0;resize:vertical;outline:none;color:var(--fg);line-height:1.5}
+textarea::placeholder,input::placeholder{color:#5c6f82}
+.count{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.mini{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:4px 10px;font-size:12px}
+.mini:hover{border-color:var(--ice-dim)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:3px 10px;font-size:12px}
+.chip:hover{color:var(--fg);border-color:var(--ice-dim)}
+.chip::before{content:"+ ";color:var(--ice-dim)}
+.models{display:grid;gap:6px}
+.model{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--bg);text-align:left}
+.model[aria-checked="true"]{border-color:var(--ice);background:color-mix(in srgb,var(--ice) 8%,var(--bg))}
+.model:disabled{opacity:.45;cursor:not-allowed}
+.model .dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--muted);margin-top:3px}
+.model[aria-checked="true"] .dot{border-color:var(--ice);background:var(--ice)}
+.model b{font-weight:600}
+.model small{display:block;color:var(--muted);font-size:12px}
+.pill{font-family:var(--mono);font-size:10px;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--muted);margin-left:6px}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:420px){.opts{grid-template-columns:1fr}}
+.seg{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}
+.seg button{flex:1;border:0;background:transparent;padding:5px 8px;border-radius:999px;color:var(--muted);font-size:12.5px}
+.seg button[aria-pressed="true"]{background:var(--raise);color:var(--fg)}
+.slider{display:flex;flex-direction:column;gap:4px}
+.slider output{font-family:var(--mono);font-size:11px}
+input[type=range]{width:100%;accent-color:var(--ice)}
+.tog{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap}
+details summary{cursor:pointer;color:var(--muted);font-size:12px}
+.create{border:0;border-radius:999px;padding:14px 18px;font-family:var(--display);font-weight:900;font-size:22px;letter-spacing:.06em;text-transform:uppercase;color:#1a0b02;background:linear-gradient(180deg,var(--spark2),var(--spark));box-shadow:0 6px 24px -8px var(--spark);display:flex;align-items:center;justify-content:center;gap:10px}
+.create:disabled{filter:grayscale(.7) brightness(.7);cursor:progress}
+.create svg{width:22px;height:22px}
+.err{color:var(--danger);font-size:13px;margin:0}
+.fine{font-size:12px;color:var(--muted);margin:0}
+.libhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.libhead h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0;text-transform:uppercase}
+.search{background:var(--raise);border:1px solid var(--line);border-radius:999px;padding:6px 12px;width:220px;max-width:100%}
+.list{display:flex;flex-direction:column;gap:2px}
+.day{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:10px 4px 4px}
+.track{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px;border-radius:12px;border:1px solid transparent}
+.track:hover{background:var(--raise)}
+.track.active{background:var(--raise);border-color:var(--ice-dim)}
+.cover{position:relative;width:64px;height:64px;border-radius:10px;overflow:hidden;border:0;padding:0;background:var(--raise)}
+.cover canvas{width:100%;height:100%;display:block}
+.cover .ov{position:absolute;inset:0;display:grid;place-items:center;background:rgba(5,9,14,.4)}
+.cover:not(.busy) .ov{opacity:0;transition:opacity .15s}
+.track:hover .cover .ov,.track.active .cover .ov,.cover:focus-visible .ov{opacity:1}
+.cover svg{width:26px;height:26px;fill:#fff}
+.meta{min-width:0;display:flex;flex-direction:column;gap:3px}
+.t1{display:flex;align-items:center;gap:6px;min-width:0}
+.title{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{font-family:var(--mono);font-size:10px;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--muted);flex:none}
+.st-generating{color:var(--ice);border-color:var(--ice-dim)}
+.st-failed{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
+.st-ready{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+.style{color:var(--muted);font-size:12.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.why{font-size:12px;color:var(--danger)}
+.note{font-size:12px;color:var(--spark2)}
+.acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.ghost{border:1px solid var(--line);background:transparent;border-radius:8px;padding:5px 9px;font-size:12px;color:var(--muted);text-decoration:none}
+.ghost:hover{color:var(--fg);border-color:var(--ice-dim)}
+.ghost.warn{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 50%,transparent)}
+@media (max-width:560px){.track{grid-template-columns:56px minmax(0,1fr)}.cover{width:56px;height:56px}.acts{grid-column:1/-1;justify-content:flex-start}}
+.spin{width:18px;height:18px;border:2px solid var(--ice-dim);border-top-color:var(--ice);border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.empty{color:var(--muted);padding:24px 8px;text-align:center}
+.player{position:fixed;left:0;right:0;bottom:0;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));z-index:5}
+.pinner{max-width:1240px;margin:0 auto;display:grid;grid-template-columns:minmax(0,240px) auto minmax(0,1fr) auto;gap:14px;align-items:center}
+.now{display:flex;gap:10px;align-items:center;min-width:0}
+.now canvas{width:44px;height:44px;border-radius:8px;flex:none;background:var(--raise)}
+.now .nt{min-width:0}.now .nt div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.now .ns{font-size:11.5px;color:var(--muted)}
+.pp{width:44px;height:44px;border-radius:50%;border:0;background:var(--fg);display:grid;place-items:center}
+.pp svg{width:20px;height:20px;fill:var(--bg)}
+.seek{display:flex;gap:10px;align-items:center;min-width:0}
+.seek input{flex:1;min-width:0}
+.tm{font-family:var(--mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.vol{width:90px}
+@media (max-width:760px){.pinner{grid-template-columns:auto minmax(0,1fr)}.now{grid-column:1/-1}.now canvas,.vol{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--raise);border:1px solid var(--ice-dim);padding:8px 14px;border-radius:999px;font-size:13px;z-index:6;max-width:calc(100% - 32px)}
+/* auth + account */
+.authwrap{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;padding:16px;z-index:20}
+.authcard{width:min(400px,100%);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.authtabs{display:flex;gap:8px}
+.authtabs button{flex:1;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:8px;font-size:13px;color:var(--muted)}
+.authtabs button[aria-selected="true"]{color:var(--fg);border-color:var(--ice)}
+.authcard input[type=email],.authcard input[type=password]{background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+.bigbtn{border:0;border-radius:999px;padding:12px;font-weight:700;background:linear-gradient(180deg,var(--spark2),var(--spark));color:#1a0b02;font-size:16px}
+.ubar{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.credits{font-family:var(--mono);font-size:12px;border:1px solid var(--ice-dim);color:var(--ice);border-radius:999px;padding:4px 12px}
+.credits.low{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 50%,transparent)}
+/* billing */
+.creditbanner{border:1px solid color-mix(in srgb,var(--spark2) 55%,transparent);background:color-mix(in srgb,var(--spark2) 10%,transparent);border-radius:12px;padding:10px 14px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.creditbanner b{color:var(--spark2)}
+.creditbanner .row{margin-left:auto}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.tier{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.tier.hot{border-color:var(--ice);box-shadow:0 0 0 1px var(--ice)}
+.tier h3{margin:0;font-family:var(--display);font-size:22px;text-transform:uppercase;letter-spacing:.04em}
+.tier .price{font-family:var(--mono);font-size:13px;color:var(--ice)}
+.tier ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px;display:flex;flex-direction:column;gap:4px}
+.tier .cur{font-size:12px;color:var(--ok)}
+.planbtn{border:0;border-radius:999px;padding:10px;font-weight:700;background:linear-gradient(180deg,var(--spark2),var(--spark));color:#1a0b02}
+.planbtn:disabled{filter:grayscale(.8);cursor:not-allowed}
+.planbtn.ghostbtn{background:transparent;border:1px solid var(--line);color:var(--fg)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1 class="logo"><span class="ice">Ice Ice</span><span class="ham">Hammer</span></h1>
+    <p class="tag">Write lyrics, describe a style, and get full songs with vocals. Every Create makes two takes, saved to your library.</p>
+    <div class="ubar" id="ubar" hidden>
+      <span id="uEmail"></span>
+      <span class="credits" id="uCredits" title="Generation credits"></span>
+      <button class="ghost" id="plansBtn" type="button">Plans</button>
+      <button class="ghost" id="buyCreditsBtn" type="button">Buy credits</button>
+      <a class="ghost" id="portalLink" href="#" hidden>Manage billing</a>
+      <button class="ghost" id="logoutBtn" type="button">Log out</button>
+    </div>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+  <div class="creditbanner" id="creditBanner" hidden></div>
+
+  <main class="grid">
+    <section class="panel" aria-label="Create">
+      <div class="field">
+        <span class="lbl">Model</span>
+        <div class="models" id="models" role="radiogroup" aria-label="Model"><div class="fine">Checking models…</div></div>
+      </div>
+
+      <div class="field">
+        <div class="row spread"><label for="lyrics">Lyrics</label><span class="count" id="lyrCount">0/5000</span></div>
+        <textarea id="lyrics" rows="8" maxlength="5000" placeholder="[Verse]&#10;Your lines here&#10;&#10;[Chorus]&#10;Your hook here"></textarea>
+        <div class="row">
+          <input type="text" id="topic" placeholder="Lyric starter topic, e.g. cold nights" style="flex:1;min-width:120px;border-bottom:1px solid var(--line);padding:4px 0">
+          <button class="mini" id="writeLyr" type="button">Draft lyrics</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="row spread"><label for="style">Styles</label><span class="count" id="styCount">0/1000</span></div>
+        <textarea id="style" rows="3" maxlength="1000" placeholder="hard trap, 808 slides, dark bells, female rap vocals, 144 bpm"></textarea>
+        <div class="chips" id="chips"></div>
+      </div>
+
+      <div class="field">
+        <label for="title">Song title <span style="text-transform:none;letter-spacing:0;font-weight:400">(optional)</span></label>
+        <input type="text" id="title" maxlength="80" placeholder="Named from your lyrics if empty">
+      </div>
+
+      <div class="opts">
+        <div class="slider"><div class="row spread"><label class="lbl" for="dur">Length</label><output id="durO">2:00</output></div><input type="range" id="dur" min="15" max="240" step="5" value="120"></div>
+        <div class="slider"><span class="lbl">Takes per Create</span><div class="seg" role="group" aria-label="Takes"><button type="button" data-takes="1" aria-pressed="false">1</button><button type="button" data-takes="2" aria-pressed="true">2</button></div></div>
+      </div>
+      <label class="tog"><input type="checkbox" id="inst"> Instrumental (ignore lyrics)</label>
+      <details><summary>Seed</summary>
+        <div class="field" style="margin-top:8px"><label for="seed">Seed (blank = random)</label><input type="number" id="seed" placeholder="e.g. 4412"></div>
+      </details>
+
+      <button class="create" id="createBtn" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 21l8.5-8.5 2 2L5 23zM13.2 2.6l8.2 8.2-3.5 3.5-2.2-2.2-1.6 1.6-4.2-4.2 1.6-1.6-2.2-2.2z"/></svg><span>Create</span></button>
+      <p class="err" id="formErr" hidden></p>
+      <p class="fine">Songs usually take 20 seconds to a few minutes. You can close this tab; generation continues on the server.</p>
+    </section>
+
+    <section class="panel" aria-label="Library">
+      <div class="libhead"><h2>Library</h2><input type="text" class="search" id="q" placeholder="Search titles and styles"></div>
+      <div class="list" id="list"><div class="empty">Loading…</div></div>
+    </section>
+  </main>
+
+  <section class="panel" id="plansPanel" aria-label="Plans" style="margin-top:16px">
+    <div class="libhead"><h2>Plans</h2><span class="fine">Credits are debited before each generation and refunded if it fails.</span></div>
+    <div class="plans" id="plans"><div class="fine">Loading plans…</div></div>
+  </section>
+</div>
+
+<div class="player" aria-label="Player">
+  <div class="pinner">
+    <div class="now"><canvas id="npCover" width="88" height="88"></canvas><div class="nt"><div id="npTitle">Nothing playing</div><div class="ns" id="npSub">Pick a finished track</div></div></div>
+    <button class="pp" id="ppBtn" type="button" aria-label="Play"><svg viewBox="0 0 24 24" id="ppIcon"><path d="M7 4l13 8-13 8z"/></svg></button>
+    <div class="seek"><span class="tm" id="tCur">0:00</span><input type="range" id="seek" min="0" max="1000" value="0" aria-label="Seek"><span class="tm" id="tDur">0:00</span></div>
+    <input type="range" class="vol" id="vol" min="0" max="100" value="90" aria-label="Volume">
+  </div>
+</div>
+<audio id="audio" preload="metadata"></audio>
+
+<div class="authwrap" id="authView" hidden>
+  <div class="authcard">
+    <h1 class="logo" style="font-size:40px"><span class="ice">Ice Ice</span><span class="ham">Hammer</span></h1>
+    <p class="tag">AI songs with vocals in ~30 seconds. Sign in to start creating.</p>
+    <div class="authtabs" role="tablist">
+      <button type="button" id="tabLogin" aria-selected="true">Sign in</button>
+      <button type="button" id="tabSignup" aria-selected="false">Create account</button>
+    </div>
+    <input type="email" id="aEmail" placeholder="you@example.com" autocomplete="email">
+    <input type="password" id="aPass" placeholder="Password (8+ characters)" autocomplete="current-password">
+    <button class="bigbtn" id="authGo" type="button">Sign in</button>
+    <p class="err" id="authErr" hidden></p>
+    <p class="fine" id="authNote">New here? Create an account — you get 10 free credits after verifying your email.</p>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = (s) => { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); }
+function hash(str) { let h = 1779033703 ^ str.length; for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; } return h >>> 0; }
+function rng(seed) { let a = seed >>> 0; return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+let csrfToken = null; // per-user token from /api/me; sent back on state-changing calls
+async function api(path, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (csrfToken && method !== 'GET' && method !== 'HEAD') headers['X-CSRF-Token'] = csrfToken;
+  const res = await fetch(path, { credentials: 'include', ...opts, headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+/* ---------- composer ---------- */
+const CHIPS = ['hard trap', 'female rap vocals', 'male vocals', 'deathcore', 'powerful pop', 'deep house', 'lofi hip hop', '80s soul', 'country', 'drum and bass', 'brass', 'dark', 'euphoric', 'acoustic', 'cinematic', '808 bass'];
+$('#chips').innerHTML = CHIPS.map((c) => `<button class="chip" type="button">${c}</button>`).join('');
+$('#chips').addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (!b) return; const s = $('#style'); s.value = (s.value.trim() ? s.value.trim().replace(/,$/, '') + ', ' : '') + b.textContent; s.dispatchEvent(new Event('input')); });
+$('#lyrics').addEventListener('input', (e) => { $('#lyrCount').textContent = e.target.value.length + '/5000'; });
+$('#style').addEventListener('input', (e) => { $('#styCount').textContent = e.target.value.length + '/1000'; });
+$('#dur').addEventListener('input', (e) => { $('#durO').textContent = fmt(+e.target.value); updateCreateBtn(); });
+let takes = 2;
+document.querySelectorAll('[data-takes]').forEach((b) => b.addEventListener('click', () => { takes = +b.dataset.takes; document.querySelectorAll('[data-takes]').forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
+
+function draftLyrics(topic) {
+  const R = rng(Date.now() & 0xffffff); const t = (topic || 'the cold').trim(); const T = t[0].toUpperCase() + t.slice(1);
+  const sh = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const V = [`I been thinking 'bout ${t} all night`, `Cold hands, steady heart, ${t} in my sight`, `Every step I take, it's ${t} on my mind`, `Crack the ice, swing it hard, leave the doubt behind`, `Streetlights flicker when I talk about ${t}`, `Nobody told me it would feel like ${t}`, `Counting every second with ${t} in the frame`, `Bring the hammer down, nothing stays the same`];
+  const C = [`${T}, you're the only thing`, `Hit it like a hammer, hear it ring`, `We don't stop and we don't fold`, `Heart on fire in the cold`];
+  const v = sh(V);
+  return `[Verse]\n${v.slice(0, 4).join('\n')}\n\n[Chorus]\n${C.join('\n')}\n\n[Verse]\n${v.slice(4, 8).join('\n')}\n\n[Chorus]\n${C.join('\n')}`;
+}
+$('#writeLyr').onclick = () => { $('#lyrics').value = draftLyrics($('#topic').value); $('#lyrics').dispatchEvent(new Event('input')); };
+
+let providers = [], providerId = null;
+function renderModels() {
+  $('#models').innerHTML = providers.map((p) => {
+    const usable = p.ok && p.allowed;
+    const tip = !p.ok ? 'Unavailable: ' + p.error : p.allowed ? p.model : p.model + ' — needs a paid plan';
+    return `<button type="button" class="model" role="radio" data-id="${p.id}" aria-checked="${p.id === providerId}" ${usable ? '' : 'disabled'} title="${esc(tip)}">
+    <span class="dot"></span><span><b>${esc(p.label)}</b><span class="pill">${p.vocals ? 'vocals' : 'instrumental'}</span><span class="pill">${esc(p.creditCostLabel || (p.creditCost + ' credits/take'))}</span>${p.ok && !p.allowed ? '<span class="pill">paid plan</span>' : ''}<small>${esc(p.ok ? p.blurb : 'Unavailable: ' + p.error)}</small></span></button>`;
+  }).join('');
+}
+$('#models').addEventListener('click', (e) => { const b = e.target.closest('.model'); if (!b || b.disabled) return; providerId = b.dataset.id; renderModels(); applyDurationRange(); });
+function applyDurationRange() {
+  const p = providers.find((x) => x.id === providerId); const r = $('#dur');
+  let min = Math.max(5, Math.ceil(p?.durationMin ?? 15)), max = Math.min(600, Math.floor(p?.durationMax ?? 240));
+  if (p && p.id === 'elevenlabs') max = Math.min(max, 180); // per-second billing: hard cap
+  r.min = min; r.max = max; if (+r.value > max) r.value = max; if (+r.value < min) r.value = min; $('#durO').textContent = fmt(+r.value);
+  updateCreateBtn();
+}
+async function loadProviders() {
+  try {
+    const d = await api('/api/providers'); providers = d.providers;
+    if (!d.tokenSet) { $('#banner').hidden = false; $('#banner').innerHTML = 'Add your Replicate API token to the server as <code>REPLICATE_API_TOKEN</code>, then restart. Songs cannot be generated until then.'; }
+    const saved = (() => { try { return localStorage.getItem('ich.model'); } catch { return null; } })();
+    providerId = (providers.find((p) => p.ok && p.id === saved) || providers.find((p) => p.ok) || providers[0] || {}).id;
+    renderModels(); applyDurationRange();
+  } catch (e) { $('#models').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+$('#models').addEventListener('click', () => { try { localStorage.setItem('ich.model', providerId); } catch {} });
+
+async function generate(body) {
+  const btn = $('#createBtn'); btn.disabled = true; btn.querySelector('span').textContent = 'Forging…'; $('#formErr').hidden = true;
+  try { const d = await api('/api/generate', { method: 'POST', body: JSON.stringify(body) }); mergeTracks(d.tracks); startPolling(); await refreshMe(); toast(d.tracks.length > 1 ? 'Two takes are generating' : 'Generating'); }
+  catch (e) { $('#formErr').textContent = e.message; $('#formErr').hidden = false; await refreshMe(); }
+  finally { updateCreateBtn(); }
+}
+function estCost(p) {
+  // Estimated credits for ONE take at the current duration slider.
+  if (!p || !p.ok || !p.allowed) return Infinity;
+  if (p.perSecond && p.creditsPerSec) return Math.max(1, Math.ceil(+$('#dur').value * p.creditsPerSec));
+  return p.creditCost;
+}
+function updateCreateBtn() {
+  const btn = $('#createBtn');
+  if (me && providers.length) {
+    const minCost = Math.min(...providers.map(estCost));
+    if (!Number.isFinite(minCost) || me.credits < minCost) { btn.disabled = true; btn.querySelector('span').textContent = 'Out of credits'; return; }
+  }
+  btn.disabled = false; btn.querySelector('span').textContent = 'Create';
+}
+let me = null;
+function lowCreditThreshold() {
+  if (!me) return 4;
+  if (me.plan === 'free' || !me.monthlyCredits) return 2; // trial: warn near-empty
+  return Math.max(1, Math.ceil(me.monthlyCredits * 0.2)); // paid: 20% of monthly allowance
+}
+function updateCreditBanner() {
+  const b = $('#creditBanner');
+  if (!me) { b.hidden = true; return; }
+  if (me.credits <= 0) {
+    b.hidden = false;
+    b.innerHTML = `<span><b>You're out of credits.</b> Top up to keep generating.</span><span class="row"><button class="ghost" type="button" onclick="buyPack()">Buy 100 credits</button><button class="ghost" type="button" onclick="document.querySelector('#plansPanel').scrollIntoView({behavior:'smooth'})">See plans</button></span>`;
+  } else if (me.credits <= lowCreditThreshold()) {
+    b.hidden = false;
+    b.innerHTML = `<span>Running low — <b>${me.credits} credit${me.credits === 1 ? '' : 's'}</b> left.</span><span class="row"><button class="ghost" type="button" onclick="buyPack()">Buy credits</button></span>`;
+  } else {
+    b.hidden = true;
+  }
+}
+async function refreshMe() {
+  try { const d = await api('/api/me'); me = d.user; csrfToken = d.csrfToken || null; }
+  catch { me = null; csrfToken = null; return; }
+  $('#uEmail').textContent = me.email + (me.role === 'admin' ? ' (admin)' : '');
+  const c = $('#uCredits');
+  c.textContent = me.credits + ' credits';
+  c.classList.toggle('low', me.credits < 4);
+  $('#portalLink').hidden = !me.hasBilling;
+  updateCreditBanner();
+  if (billingCfg) renderPlans();
+  updateCreateBtn();
+}
+$('#createBtn').onclick = () => {
+  const seed = $('#seed').value.trim();
+  generate({ providerId, style: $('#style').value, lyrics: $('#lyrics').value, title: $('#title').value, duration: +$('#dur').value, instrumental: $('#inst').checked, takes, seed: seed === '' ? null : +seed });
+};
+
+/* ---------- library ---------- */
+let tracks = [];
+const confirmDel = new Set();
+function mergeTracks(list) { const byId = new Map(tracks.map((t) => [t.id, t])); for (const t of list) byId.set(t.id, t); tracks = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt); renderList(); }
+function dayLabel(ts) { const d = new Date(ts), n = new Date(); const diff = Math.round((new Date(n.toDateString()) - new Date(d.toDateString())) / 864e5); if (diff === 0) return 'Today'; if (diff === 1) return 'Yesterday'; if (diff < 7) return d.toLocaleDateString(undefined, { weekday: 'long' }); return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+const provLabel = (id) => (providers.find((p) => p.id === id) || { label: id }).label;
+const STATUS = { queued: 'Queued', generating: 'Generating', ready: 'Ready', failed: 'Failed' };
+
+function drawCover(cv, t) {
+  const c = cv.getContext('2d'), W = cv.width, H = cv.height, R = rng(hash(t.id + t.style));
+  const hue = 190 + Math.floor(R() * 40) - (/metal|core|thrash|punk|dark|trap/i.test(t.style) ? 170 : 0);
+  const g = c.createLinearGradient(0, 0, W, H); g.addColorStop(0, `hsl(${hue},55%,${18 + R() * 10}%)`); g.addColorStop(1, `hsl(${(hue + 40) % 360},60%,${6 + R() * 6}%)`);
+  c.fillStyle = g; c.fillRect(0, 0, W, H);
+  for (let i = 0; i < 7; i++) { c.beginPath(); const x = R() * W, y = R() * H, r = W * (.2 + R() * .5); c.moveTo(x, y); for (let k = 0; k < 3; k++) c.lineTo(x + (R() - .5) * r * 2, y + (R() - .5) * r * 2); c.closePath(); c.fillStyle = `hsla(${hue + R() * 30},80%,${60 + R() * 30}%,${.06 + R() * .16})`; c.fill(); }
+  c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = W / 60; c.beginPath(); const y = H * (.35 + R() * .3); c.moveTo(0, y); for (let x = 0; x <= W; x += W / 12) c.lineTo(x, y + (R() - .5) * H * .25); c.stroke();
+}
+
+function renderList() {
+  const q = $('#q').value.trim().toLowerCase();
+  const items = tracks.filter((t) => !q || (t.title + ' ' + t.style).toLowerCase().includes(q));
+  if (!items.length) { $('#list').innerHTML = `<div class="empty">${q ? 'No tracks match that search.' : 'No songs yet. Write some lyrics, add a style, and press Create.'}</div>`; return; }
+  let html = '', last = '';
+  for (const t of items) {
+    const dl = dayLabel(t.createdAt); if (dl !== last) { html += `<div class="day">${dl}</div>`; last = dl; }
+    const act = cur === t.id, playing = act && !audio.paused, busy = t.status === 'queued' || t.status === 'generating';
+    const icon = busy ? '<span class="spin" aria-hidden="true"></span>' : t.status === 'failed' ? '<svg viewBox="0 0 24 24"><path d="M11 5h2v9h-2zM11 16h2v2h-2z"/></svg>' : playing ? '<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>';
+    html += `<div class="track${act ? ' active' : ''}" data-id="${t.id}">
+      <button class="cover${busy ? ' busy' : ''}" data-act="play" ${t.status === 'ready' ? '' : 'aria-disabled="true"'} aria-label="${playing ? 'Pause' : 'Play'} ${esc(t.title)}"><canvas width="128" height="128" data-cover="${t.id}"></canvas><span class="ov">${icon}</span></button>
+      <div class="meta">
+        <div class="t1"><span class="title">${esc(t.title)}</span>${t.take ? `<span class="badge">Take ${t.take}</span>` : ''}<span class="badge st-${t.status}">${STATUS[t.status] || t.status}</span>${t.instrumental ? '<span class="badge">Inst.</span>' : ''}</div>
+        <div class="style">${esc(t.style || '(no style)')}</div>
+        <div class="fine">${esc(provLabel(t.providerId))} · ${t.duration ? fmt(t.duration) + ' long' : 'default length'}${t.seed != null ? ' · seed ' + t.seed : ''}</div>
+        ${t.status === 'failed' && t.error ? `<div class="why">${esc(t.error)}</div>` : ''}
+        ${(t.notes || []).map((n) => `<div class="note">${esc(n)}</div>`).join('')}
+      </div>
+      <div class="acts">
+        ${t.audioUrl ? `<a class="ghost" href="${t.audioUrl}?download" download>Download</a>` : ''}
+        <button class="ghost" type="button" data-act="reuse" title="Load this song's settings into the composer">Reuse</button>
+        <button class="ghost" type="button" data-act="remix" title="Same settings, new seed, one take">Remix</button>
+        <button class="ghost${confirmDel.has(t.id) ? ' warn' : ''}" type="button" data-act="del">${confirmDel.has(t.id) ? 'Confirm delete' : busy ? 'Cancel' : 'Delete'}</button>
+      </div></div>`;
+  }
+  $('#list').innerHTML = html;
+  document.querySelectorAll('[data-cover]').forEach((cv) => { const t = tracks.find((x) => x.id === cv.dataset.cover); if (t) drawCover(cv, t); });
+}
+$('#q').addEventListener('input', renderList);
+
+$('#list').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const id = b.closest('.track').dataset.id; const t = tracks.find((x) => x.id === id); if (!t) return;
+  const a = b.dataset.act;
+  if (a === 'play') { if (t.status === 'ready') play(t); else if (t.status === 'failed') toast(t.error || 'This take failed'); else toast('Still generating'); }
+  else if (a === 'reuse') {
+    $('#style').value = t.style; $('#lyrics').value = t.lyrics; $('#title').value = ''; $('#inst').checked = t.instrumental; $('#seed').value = '';
+    if (providers.find((p) => p.id === t.providerId && p.ok)) { providerId = t.providerId; renderModels(); applyDurationRange(); }
+    if (t.duration) $('#dur').value = t.duration; $('#durO').textContent = fmt(+$('#dur').value);
+    ['style', 'lyrics'].forEach((i) => $('#' + i).dispatchEvent(new Event('input')));
+    window.scrollTo({ top: 0, behavior: 'smooth' }); toast('Settings loaded into the composer');
+  }
+  else if (a === 'remix') generate({ providerId: t.providerId, style: t.style, lyrics: t.lyrics, title: t.title + ' (Remix)', duration: t.duration, instrumental: t.instrumental, takes: 1, seed: null });
+  else if (a === 'del') {
+    if (!confirmDel.has(id)) { confirmDel.add(id); renderList(); setTimeout(() => { confirmDel.delete(id); renderList(); }, 3500); return; }
+    confirmDel.delete(id);
+    try { await api('/api/tracks/' + id, { method: 'DELETE' }); if (cur === id) { audio.pause(); audio.removeAttribute('src'); cur = null; updatePlayer(); } tracks = tracks.filter((x) => x.id !== id); renderList(); }
+    catch (err) { toast(err.message); }
+  }
+});
+
+let pollTimer = null;
+async function refresh() { try { const d = await api('/api/tracks'); tracks = d.tracks; renderList(); } catch (e) { /* keep last view */ } return tracks.some((t) => t.status === 'queued' || t.status === 'generating'); }
+function startPolling() { if (pollTimer) return; pollTimer = setInterval(async () => { const busy = await refresh(); if (!busy) { clearInterval(pollTimer); pollTimer = null; } }, 4000); }
+
+/* ---------- player ---------- */
+const audio = $('#audio'); let cur = null;
+audio.volume = .9;
+function play(t) {
+  if (cur === t.id) { audio.paused ? audio.play() : audio.pause(); return; }
+  cur = t.id; audio.src = t.audioUrl; audio.play().catch(() => {}); updatePlayer();
+}
+function updatePlayer() {
+  const t = tracks.find((x) => x.id === cur);
+  $('#npTitle').textContent = t ? t.title + (t.take ? ` (Take ${t.take})` : '') : 'Nothing playing';
+  $('#npSub').textContent = t ? provLabel(t.providerId) : 'Pick a finished track';
+  $('#ppIcon').innerHTML = !audio.paused ? '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>' : '<path d="M7 4l13 8-13 8z"/>';
+  $('#ppBtn').setAttribute('aria-label', audio.paused ? 'Play' : 'Pause');
+  if (t) drawCover($('#npCover'), t);
+  renderList();
+}
+['play', 'pause', 'ended', 'loadedmetadata'].forEach((ev) => audio.addEventListener(ev, updatePlayer));
+audio.addEventListener('timeupdate', () => { $('#tCur').textContent = fmt(audio.currentTime); $('#tDur').textContent = fmt(audio.duration); if (audio.duration) $('#seek').value = Math.round(audio.currentTime / audio.duration * 1000); });
+audio.addEventListener('error', () => { if (cur) toast('Could not play this file'); });
+$('#seek').addEventListener('input', (e) => { if (audio.duration) audio.currentTime = e.target.value / 1000 * audio.duration; });
+$('#vol').addEventListener('input', (e) => { audio.volume = e.target.value / 100; });
+$('#ppBtn').onclick = () => { if (cur) { audio.paused ? audio.play() : audio.pause(); } else { const t = tracks.find((x) => x.status === 'ready'); if (t) play(t); } };
+document.addEventListener('keydown', (e) => { if (e.code === 'Space' && !/INPUT|TEXTAREA|BUTTON|A/.test(document.activeElement.tagName)) { e.preventDefault(); $('#ppBtn').click(); } });
+
+/* ---------- billing ---------- */
+let billingCfg = null;
+async function loadBilling() {
+  try { billingCfg = await api('/api/billing/config'); } catch { billingCfg = { enabled: false }; }
+  renderPlans();
+}
+function renderPlans() {
+  const el = $('#plans');
+  if (!el) return;
+  if (!billingCfg || !billingCfg.enabled) {
+    el.innerHTML = `<div class="fine">Paid plans are coming soon — billing is not configured on this server yet.</div>`;
+    return;
+  }
+  const cur = me ? me.plan : 'free';
+  el.innerHTML = billingCfg.plans.map((p) => `
+    <div class="tier${p.id === 'creator' ? ' hot' : ''}">
+      <h3>${esc(p.label)}</h3>
+      <div class="price">$${p.price.toFixed(2)}/mo · ${p.monthlyCredits} credits</div>
+      <div class="fine">${esc(p.blurb)}</div>
+      <ul>${p.models.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>
+      ${cur === p.id ? '<span class="cur">✓ Current plan</span>' : `<button class="planbtn" type="button" onclick="buyPlan('${p.id}')">Choose ${esc(p.label)}</button>`}
+    </div>`).join('') + `
+    <div class="tier">
+      <h3>Credit pack</h3>
+      <div class="price">$${billingCfg.pack.price.toFixed(2)} once · ${billingCfg.pack.credits} credits</div>
+      <div class="fine">One-time top-up. Never expires, works on any plan.</div>
+      <button class="planbtn ghostbtn" type="button" onclick="buyPack()">Buy credits</button>
+    </div>`;
+}
+async function buyPlan(plan) {
+  try {
+    const d = await api('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ kind: 'subscription', plan }) });
+    location.href = d.url;
+  } catch (e) { toast(e.message); }
+}
+async function buyPack() {
+  try {
+    const d = await api('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ kind: 'pack' }) });
+    location.href = d.url;
+  } catch (e) { toast(e.message); }
+}
+async function openPortal(e) {
+  e.preventDefault();
+  try {
+    const d = await api('/api/billing/portal');
+    location.href = d.url;
+  } catch (e2) { toast(e2.message); }
+}
+$('#plansBtn').onclick = () => $('#plansPanel').scrollIntoView({ behavior: 'smooth' });
+$('#buyCreditsBtn').onclick = () => buyPack();
+$('#portalLink').onclick = openPortal;
+
+/* ---------- auth ---------- */
+let authMode = 'login';
+function setAuthMode(m) {
+  authMode = m;
+  $('#tabLogin').setAttribute('aria-selected', m === 'login');
+  $('#tabSignup').setAttribute('aria-selected', m === 'signup');
+  $('#authGo').textContent = m === 'login' ? 'Sign in' : 'Create account';
+  $('#aPass').setAttribute('autocomplete', m === 'login' ? 'current-password' : 'new-password');
+}
+$('#tabLogin').onclick = () => setAuthMode('login');
+$('#tabSignup').onclick = () => setAuthMode('signup');
+async function submitAuth() {
+  $('#authErr').hidden = true;
+  const email = $('#aEmail').value.trim(), password = $('#aPass').value;
+  try {
+    const d = await api('/api/auth/' + authMode, { method: 'POST', body: JSON.stringify({ email, password }) });
+    if (authMode === 'signup' && !d.verified) {
+      $('#authNote').textContent = 'Account created! Check the server console for your verification link — generation unlocks after you verify.';
+      setAuthMode('login');
+      return;
+    }
+    location.reload();
+  } catch (e) { $('#authErr').textContent = e.message; $('#authErr').hidden = false; }
+}
+$('#authGo').onclick = submitAuth;
+$('#aPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
+$('#aEmail').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
+$('#logoutBtn').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); csrfToken = null; me = null; location.reload(); };
+
+/* ---------- boot ---------- */
+async function boot() {
+  const qp = new URLSearchParams(location.search);
+  if (qp.get('billing') === 'success') { toast('Payment received — your credits are on the way'); history.replaceState(null, '', location.pathname); }
+  else if (qp.get('billing') === 'cancelled') { toast('Checkout cancelled'); history.replaceState(null, '', location.pathname); }
+  try {
+    const d = await api('/api/me');
+    me = d.user; csrfToken = d.csrfToken || null;
+  } catch {
+    $('#authView').hidden = false; // not signed in: show the login screen
+    await loadBilling();
+    return;
+  }
+  $('#authView').hidden = true;
+  $('#ubar').hidden = false;
+  await loadProviders();
+  await refreshMe();
+  if (await refresh()) startPolling();
+}
+boot();
+</script>
+</body>
+</html>
