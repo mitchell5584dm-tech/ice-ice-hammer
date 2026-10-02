@@ -1,0 +1,20 @@
+{
+  "name": "ice-ice-hammer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-user AI song generator SaaS: accounts, credit metering, Stripe billing, SQLite.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node test/smoke.mjs",
+    "migrate": "node scripts/migrate-json.mjs",
+    "reconcile": "node scripts/reconcile.mjs"
+  },
+  "dependencies": {
+    "stripe": "^23.0.0"
+  }
+}
