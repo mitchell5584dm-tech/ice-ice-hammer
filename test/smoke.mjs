@@ -470,6 +470,160 @@ try {
   assert.equal((await req('/api/nam/' + capId, { method: 'DELETE', user: 'carol' })).status, 404, 'double delete -> 404');
   assert.equal((await req('/api/nam', { user: 'anon' })).status, 401, 'NAM list needs a session');
 
+  // ---- creator referrals ----
+  // dave (existing user) generates a code
+  r = await req('/api/referrals/code', { method: 'POST', user: 'dave' });
+  d = await j(r);
+  assert.equal(r.status, 200, JSON.stringify(d));
+  const daveCode = d.code;
+  assert.match(daveCode, /^[A-Za-z0-9_-]{8}$/, 'code is 8 url-safe chars');
+  assert.ok(d.link.endsWith('/r/' + daveCode), 'link ends with /r/CODE');
+  r = await req('/api/referrals/code', { method: 'POST', user: 'dave' });
+  assert.equal((await j(r)).code, daveCode, 'code generation is idempotent');
+  assert.equal((await req('/api/referrals/code', { method: 'POST', user: 'anon' })).status, 401, 'code needs a session');
+  assert.equal((await req('/api/referrals/code', { method: 'POST', user: 'dave', noCsrf: true, body: {} })).status, 403, 'code needs CSRF');
+
+  // /r/CODE: click counted, cookie set, redirect to /
+  r = await req('/r/' + daveCode, { user: 'visitor' });
+  assert.equal(r.status, 302, 'referral link redirects');
+  assert.equal(r.headers.get('location'), '/', 'redirects to landing page');
+  const refCookie = r.headers.get('set-cookie') || '';
+  assert.match(refCookie, /ich_ref=/, 'attribution cookie set');
+  assert.ok(refCookie.includes(daveCode), 'cookie carries the code');
+  assert.match(refCookie, /Max-Age=7776000/, '90-day attribution window');
+  r = await req('/r/NOPE1234', { user: 'anonX' });
+  assert.equal(r.status, 302, 'unknown code still redirects');
+  assert.ok(!(r.headers.get('set-cookie') || '').includes('ich_ref'), 'no cookie for unknown code');
+
+  // signup in the same browser -> attributed to dave
+  r = await req('/api/auth/signup', { method: 'POST', user: 'visitor', body: { email: 'frank@example.com', password: 'frank-pass-1' } });
+  assert.equal(r.status, 200, JSON.stringify(await j(r.clone())));
+  const frankId = (await j(r)).user.id;
+  const frankAttr = dbm.getAttribution(frankId);
+  assert.ok(frankAttr, 'signup attributed');
+  assert.equal(frankAttr.code, daveCode, "attributed to dave's code");
+
+  // uniqueness: frank's code differs; users without a code get nulls
+  r = await req('/api/referrals/code', { method: 'POST', user: 'visitor' });
+  assert.notEqual((await j(r)).code, daveCode, 'codes are unique per user');
+  d = await j(await req('/api/referrals/me', { user: 'bob' }));
+  assert.equal(d.code, null, 'no code yet -> null');
+  assert.equal(d.link, null);
+
+  // self-referral is rejected; invalid codes are ignored silently
+  assert.equal(dbm.attributeUser((await meOf('dave')).id, daveCode), null, 'self-referral rejected');
+  assert.equal(dbm.attributeUser(frankId, 'NOPE1234'), null, 'invalid code ignored');
+
+  // dashboard stats
+  d = await j(await req('/api/referrals/me', { user: 'dave' }));
+  assert.equal(d.clicks, 1, 'one click counted');
+  assert.equal(d.signups, 1, 'one signup attributed');
+  assert.equal(d.activeSubscribers, 0, 'no paying subscribers yet');
+  assert.equal(d.balanceCents, 0, 'no earnings yet');
+  assert.equal(d.payoutThresholdCents, 5000, 'payout threshold advertised');
+  assert.equal(d.connectReady, false, 'no payout account yet');
+  assert.deepEqual(d.rates, { subscription: 0.25, pack: 0.10, windowMonths: 12 }, 'rates advertised');
+
+  // commission: frank subscribes to Creator ($8.99) -> dave earns 25% = 225c
+  r = await postWebhook(evt('evt_ref_sub_1', 'checkout.session.completed', {
+    id: 'cs_ref_1', mode: 'subscription', customer: 'cus_test_frank', subscription: 'sub_test_frank',
+    metadata: { userId: frankId, kind: 'subscription', plan: 'creator' },
+  }));
+  assert.equal(r.status, 200, 'webhook accepted');
+  d = await j(await req('/api/referrals/me', { user: 'dave' }));
+  assert.equal(d.balanceCents, 225, '25% of $8.99 Creator sub = 225c');
+  assert.equal(d.activeSubscribers, 1, 'frank counts as a paying subscriber');
+
+  // idempotency: the same event twice accrues once
+  r = await postWebhook(evt('evt_ref_sub_1', 'checkout.session.completed', {
+    id: 'cs_ref_1', mode: 'subscription', customer: 'cus_test_frank', subscription: 'sub_test_frank',
+    metadata: { userId: frankId, kind: 'subscription', plan: 'creator' },
+  }));
+  assert.deepEqual(await j(r), { received: true, ok: true, duplicate: true });
+  assert.equal((await j(await req('/api/referrals/me', { user: 'dave' }))).balanceCents, 225, 'replay accrues nothing');
+
+  // renewal -> another 25%
+  r = await postWebhook(evt('evt_ref_inv_1', 'invoice.paid', {
+    id: 'in_ref_1', customer: 'cus_test_frank', subscription: 'sub_test_frank',
+    billing_reason: 'subscription_cycle', amount_paid: 899,
+  }));
+  assert.equal(r.status, 200);
+  assert.equal((await j(await req('/api/referrals/me', { user: 'dave' }))).balanceCents, 450, 'renewal accrues another 225c');
+
+  // credit pack -> 10% of $6.99 = 70c
+  r = await postWebhook(evt('evt_ref_pack_1', 'checkout.session.completed', {
+    id: 'cs_ref_2', mode: 'payment', customer: 'cus_test_frank', payment_intent: 'pi_ref_1',
+    amount_total: 699, metadata: { userId: frankId, kind: 'pack', credits: '100' },
+  }));
+  assert.equal(r.status, 200);
+  assert.equal((await j(await req('/api/referrals/me', { user: 'dave' }))).balanceCents, 520, '10% of $6.99 pack = 70c');
+
+  // 12-month window: first paid 13 months ago -> no accrual
+  dbm.setAttributionFirstPaid(frankId, Date.now() - 13 * 30 * 24 * 3600 * 1000);
+  r = await postWebhook(evt('evt_ref_inv_2', 'invoice.paid', {
+    id: 'in_ref_2', customer: 'cus_test_frank', subscription: 'sub_test_frank',
+    billing_reason: 'subscription_cycle', amount_paid: 899,
+  }));
+  assert.equal(r.status, 200);
+  assert.equal((await j(await req('/api/referrals/me', { user: 'dave' }))).balanceCents, 520, 'no accrual after the 12-month window');
+  dbm.setAttributionFirstPaid(frankId, Date.now()); // back inside the window
+
+  // refund of the pack charge -> claw back the 70c commission
+  r = await postWebhook(evt('evt_ref_refund_1', 'charge.refunded', {
+    id: 'ch_ref_1', customer: 'cus_test_frank', amount: 699, amount_refunded: 699,
+  }));
+  assert.equal(r.status, 200);
+  assert.equal((await j(await req('/api/referrals/me', { user: 'dave' }))).balanceCents, 450, 'pack commission clawed back');
+
+  // payout below the $50 threshold -> 400
+  r = await req('/api/referrals/payout', { method: 'POST', user: 'dave' });
+  assert.equal(r.status, 400, 'payout below threshold rejected');
+  assert.match((await j(r)).error, /50/);
+
+  // connect onboarding (mock)
+  r = await req('/api/referrals/connect', { user: 'dave' });
+  d = await j(r);
+  assert.equal(r.status, 200, JSON.stringify(d));
+  assert.match(d.url, /^https:\/\/connect\.stripe\.com/, 'mock connect onboarding url');
+  assert.equal((await j(await req('/api/referrals/me', { user: 'dave' }))).connectReady, true, 'connect account recorded');
+
+  // payout without a connected account -> 400 (disconnect at the DB level, then accrue past $50)
+  const daveId = (await meOf('dave')).id;
+  dbm.setStripeConnectId(daveId, null);
+  for (let i = 0; i < 21; i++) {
+    r = await postWebhook(evt('evt_ref_bulk_' + i, 'invoice.paid', {
+      id: 'in_ref_bulk_' + i, customer: 'cus_test_frank', subscription: 'sub_test_frank',
+      billing_reason: 'subscription_cycle', amount_paid: 899,
+    }));
+    assert.equal(r.status, 200, 'bulk renewal ' + i + ' accepted');
+  }
+  const bulkTotal = 450 + 21 * 225;
+  assert.equal((await j(await req('/api/referrals/me', { user: 'dave' }))).balanceCents, bulkTotal, 'bulk renewals accrued');
+  r = await req('/api/referrals/payout', { method: 'POST', user: 'dave' });
+  assert.equal(r.status, 400, 'payout without a payout account rejected');
+  assert.match((await j(r)).error, /connect/i);
+
+  // reconnect and pay out the full balance
+  r = await req('/api/referrals/connect', { user: 'dave' });
+  assert.equal(r.status, 200);
+  r = await req('/api/referrals/payout', { method: 'POST', user: 'dave' });
+  d = await j(r);
+  assert.equal(r.status, 200, JSON.stringify(d));
+  assert.match(d.transferId, /^tr_mock_/, 'mock transfer created');
+  assert.equal(d.amountCents, bulkTotal, 'full balance paid out');
+  const afterPayout = await j(await req('/api/referrals/me', { user: 'dave' }));
+  assert.equal(afterPayout.balanceCents, 0, 'balance zeroed after payout');
+  assert.equal(afterPayout.paidOutCents, bulkTotal, 'paid-out total recorded');
+  r = await req('/api/referrals/payout', { method: 'POST', user: 'dave' });
+  assert.equal(r.status, 400, 'empty balance cannot pay out');
+
+  // admin spend view includes referral liabilities
+  d = await j(await req('/api/admin/spend', { user: 'alice' }));
+  const daveLiab = (d.referrals || []).find((x) => x.email === 'dave@example.com');
+  assert.ok(daveLiab, 'dave appears in referral liabilities');
+  assert.equal(daveLiab.paid_cents, bulkTotal, 'liability shows paid total');
+  assert.equal(daveLiab.signups, 1, 'liability shows signup count');
+
   // ---- billing disabled without keys: graceful 503s ----
   const dataDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ich-nokey-'));
   const app2 = spawn(process.execPath, ['server.mjs'], {

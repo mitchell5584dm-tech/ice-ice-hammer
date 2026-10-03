@@ -19,6 +19,8 @@ import {
   listStuckSeparations, activeSeparationCountForUser,
   addStem, getStemForUser, listStemsForTrack, updateStem, removeStemsForTrack, stemStatusForTrack,
   addNamCapture, getNamCapture, listNamCaptures, removeNamCapture,
+  createReferralCode, getReferralByCode, recordReferralClick, attributeUser,
+  referralStats, markEarningsPaidOut,
 } from './lib/db.mjs';
 import {
   hashPassword, verifyPassword, signSession, getSessionUserId, parseCookies,
@@ -26,10 +28,11 @@ import {
   csrfTokenFor, verifyCsrfToken,
 } from './lib/auth.mjs';
 import { checkRateLimit, clientIp } from './lib/ratelimit.mjs';
-import { costFor, canUseModel, estUsdFor, FREE_SIGNUP_CREDITS, ELEVENLABS_MAX_DURATION, ELEVENLABS_CREDITS_PER_SEC, costLabel, PLANS, STEM_MODEL, STEM_MODEL_VARIANT, STEM_SEPARATION_CREDITS, STEM_NAMES, STEM_USER_MAX_ACTIVE, stemCostLabel, EST_USD_PER_CREDIT } from './lib/costs.mjs';
+import { costFor, canUseModel, estUsdFor, FREE_SIGNUP_CREDITS, ELEVENLABS_MAX_DURATION, ELEVENLABS_CREDITS_PER_SEC, costLabel, PLANS, STEM_MODEL, STEM_MODEL_VARIANT, STEM_SEPARATION_CREDITS, STEM_NAMES, STEM_USER_MAX_ACTIVE, stemCostLabel, EST_USD_PER_CREDIT, REFERRAL_ATTRIBUTION_DAYS, REFERRAL_PAYOUT_THRESHOLD_CENTS, REFERRAL_SUBSCRIPTION_RATE, REFERRAL_PACK_RATE, REFERRAL_WINDOW_MONTHS } from './lib/costs.mjs';
 import {
   billingEnabled, billingConfig, createCheckoutSession, createPortalSession,
   verifyWebhookSignature, handleWebhookEvent,
+  createConnectOnboardingLink, createPayoutTransfer,
 } from './lib/billing.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -168,6 +171,18 @@ async function handleSignup(req, res) {
   const role = (isFirstUser || (process.env.ADMIN_EMAIL && process.env.ADMIN_EMAIL.toLowerCase() === email)) ? 'admin' : 'user';
   const verifyToken = autoVerify() ? null : newVerifyToken();
   const user = createUser({ id: newId(), email, passwordHash, role, verified: autoVerify() ? 1 : 0, verifyToken });
+
+  // Referral attribution: the ich_ref cookie was set by visiting /r/CODE.
+  // Self-referral (the code owner's own session creating another account with
+  // their link) is ignored; invalid codes are ignored silently by attributeUser.
+  const refCode = parseCookies(req)['ich_ref'];
+  if (refCode) {
+    const ref = getReferralByCode(refCode);
+    const sessionUserId = getSessionUserId(req);
+    if (!(ref && sessionUserId && sessionUserId === ref.owner_user_id)) {
+      attributeUser(user.id, refCode);
+    }
+  }
 
   if (autoVerify()) {
     addCredits(user.id, FREE_SIGNUP_CREDITS, 'grant');
@@ -468,6 +483,90 @@ async function handleNamDelete(req, res, user, id) {
   return send(res, 200, { ok: true });
 }
 
+// ---------- Creator referral program ----------
+// Public base URL for referral links; APP_BASE_URL overrides the Host header
+// (set it to the canonical domain, e.g. https://ice-ice-hammer.com).
+function appBaseUrl(req) {
+  return (process.env.APP_BASE_URL || baseUrl(req)).replace(/\/$/, '');
+}
+
+function referralCookieHeader(code) {
+  const maxAge = REFERRAL_ATTRIBUTION_DAYS * 24 * 60 * 60;
+  return `ich_ref=${encodeURIComponent(code)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+// GET /r/CODE — counts the click, sets the 90-day attribution cookie, and
+// sends the visitor to the landing page. Unknown codes redirect silently.
+async function handleReferralRedirect(req, res, code) {
+  const ref = getReferralByCode(code);
+  if (ref) recordReferralClick(code);
+  res.writeHead(302, {
+    ...SECURITY_HEADERS,
+    'Location': '/',
+    'Cache-Control': 'no-store',
+    ...(ref ? { 'Set-Cookie': referralCookieHeader(code) } : {}),
+  });
+  res.end();
+}
+
+// POST /api/referrals/code — get (or create) my referral code.
+async function handleReferralCode(req, res, user) {
+  const code = createReferralCode(user.id);
+  return send(res, 200, { code, link: `${appBaseUrl(req)}/r/${code}` });
+}
+
+// GET /api/referrals/me — dashboard data: link, clicks, signups, earnings.
+async function handleReferralMe(req, res, user) {
+  const stats = referralStats(user.id);
+  return send(res, 200, {
+    code: stats.code,
+    link: stats.code ? `${appBaseUrl(req)}/r/${stats.code}` : null,
+    clicks: stats.clicks,
+    signups: stats.signups,
+    activeSubscribers: stats.activeSubscribers,
+    balanceCents: stats.balanceCents,
+    paidOutCents: stats.paidOutCents,
+    payoutThresholdCents: REFERRAL_PAYOUT_THRESHOLD_CENTS,
+    connectReady: !!user.stripe_connect_id,
+    rates: {
+      subscription: REFERRAL_SUBSCRIPTION_RATE,
+      pack: REFERRAL_PACK_RATE,
+      windowMonths: REFERRAL_WINDOW_MONTHS,
+    },
+  });
+}
+
+// GET /api/referrals/connect — Stripe Connect Express onboarding link.
+async function handleReferralConnect(req, res, user) {
+  try {
+    const { url } = await createConnectOnboardingLink({ user: getUserById(user.id), baseUrl: baseUrl(req) });
+    return send(res, 200, { url });
+  } catch (e) {
+    return send(res, e.status || 500, { error: e.message });
+  }
+}
+
+// POST /api/referrals/payout — pay out the unpaid balance (>= $50 threshold)
+// to the referrer's connected Express account. The Stripe transfer is created
+// first; earnings are marked paid after it succeeds.
+async function handleReferralPayout(req, res, user) {
+  const stats = referralStats(user.id);
+  if (stats.balanceCents < REFERRAL_PAYOUT_THRESHOLD_CENTS) {
+    return send(res, 400, {
+      error: `Your balance is $${(stats.balanceCents / 100).toFixed(2)} — payouts need at least $${(REFERRAL_PAYOUT_THRESHOLD_CENTS / 100).toFixed(2)}.`,
+    });
+  }
+  try {
+    const transfer = await createPayoutTransfer({ user: getUserById(user.id), amountCents: stats.balanceCents });
+    const marked = markEarningsPaidOut(user.id, transfer.id);
+    const paidTotal = marked.reduce((s, e) => s + e.amount_cents, 0);
+    console.log(`[referrals] payout $${(paidTotal / 100).toFixed(2)} to ${user.email} (transfer ${transfer.id})`);
+    return send(res, 200, { ok: true, transferId: transfer.id, amountCents: paidTotal });
+  } catch (e) {
+    return send(res, e.status || 500, { error: e.message });
+  }
+}
+
 let polling = false;
 async function pollOnce() {
   if (polling) return; polling = true;
@@ -664,6 +763,7 @@ const server = http.createServer(async (req, res) => {
     const m = pathname.match(/^\/api\/(tracks|audio)\/([a-f0-9]{16})$/);
     const sm = pathname.match(/^\/api\/tracks\/([a-f0-9]{16})\/stems$/); // stem list + split
     const nm = pathname.match(/^\/api\/nam(?:\/([a-f0-9]{16}))?$/);      // NAM library
+    const rm = pathname.match(/^\/r\/([A-Za-z0-9_-]{4,24})$/);          // referral links
 
     // CSRF gate for cookie-authenticated state changes (skips signup/login,
     // the signature-authenticated Stripe webhook, and sessionless requests).
@@ -738,6 +838,16 @@ const server = http.createServer(async (req, res) => {
     if (nm && !nm[1] && req.method === 'POST') return await handleNamUpload(req, res, requireUser(req));
     if (nm && nm[1] && req.method === 'GET') return await handleNamDownload(req, res, requireUser(req), nm[1]);
     if (nm && nm[1] && req.method === 'DELETE') return await handleNamDelete(req, res, requireUser(req), nm[1]);
+
+    // Creator referral program.
+    if (pathname === '/api/referrals/code' && req.method === 'POST') return await handleReferralCode(req, res, requireUser(req));
+    if (pathname === '/api/referrals/me' && req.method === 'GET') return await handleReferralMe(req, res, requireUser(req));
+    if (pathname === '/api/referrals/connect' && req.method === 'GET') return await handleReferralConnect(req, res, requireUser(req));
+    if (pathname === '/api/referrals/payout' && req.method === 'POST') return await handleReferralPayout(req, res, requireUser(req));
+
+    // Public referral links: /r/CODE counts the click, sets the attribution
+    // cookie, and redirects to the landing page.
+    if (rm && req.method === 'GET') return await handleReferralRedirect(req, res, rm[1]);
 
     if (pathname.startsWith('/api/')) return send(res, 404, { error: 'Unknown endpoint' });
     if (req.method === 'GET') return await serveStatic(req, res, pathname);
