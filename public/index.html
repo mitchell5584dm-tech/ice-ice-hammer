@@ -143,6 +143,27 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
 .planbtn{border:0;border-radius:999px;padding:10px;font-weight:700;background:linear-gradient(180deg,var(--spark2),var(--spark));color:#1a0b02}
 .planbtn:disabled{filter:grayscale(.8);cursor:not-allowed}
 .planbtn.ghostbtn{background:transparent;border:1px solid var(--line);color:var(--fg)}
+/* studio mixer */
+.mixwrap{position:fixed;inset:0;background:rgba(4,7,11,.94);z-index:30;display:flex;align-items:center;justify-content:center;padding:16px}
+.mixpanel{width:min(1080px,100%);max-height:calc(100vh - 48px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.mixhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.mixhead h2{font-family:var(--display);font-size:24px;margin:0;text-transform:uppercase}
+.strips{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.strip{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.strip h4{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--ice)}
+.strip .lbl{font-size:10px}
+.fader{display:flex;align-items:center;gap:8px}
+.fader input[type=range]{flex:1;min-width:0}
+.fader output{font-family:var(--mono);font-size:11px;min-width:52px;text-align:right;color:var(--muted)}
+.msbtn{display:flex;gap:6px}
+.msbtn button{flex:1;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:4px;font-size:11px;font-weight:700;color:var(--muted)}
+.msbtn button.m[aria-pressed="true"]{background:var(--danger);border-color:var(--danger);color:#1a0b02}
+.msbtn button.s[aria-pressed="true"]{background:var(--ice);border-color:var(--ice);color:#06222e}
+.buses{display:flex;gap:10px;flex-wrap:wrap}
+.bus{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;min-width:190px;flex:1}
+.bus h4{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:12px;max-width:100%}
+#namList option{padding:4px 8px}
 </style>
 </head>
 <body>
@@ -213,6 +234,34 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
     <div class="libhead"><h2>Plans</h2><span class="fine">Credits are debited before each generation and refunded if it fails.</span></div>
     <div class="plans" id="plans"><div class="fine">Loading plans…</div></div>
   </section>
+</div>
+
+<div class="mixwrap" id="mixView" hidden>
+  <div class="mixpanel" role="dialog" aria-modal="true" aria-label="Studio mixer">
+    <div class="mixhead">
+      <h2 id="mixTitle">Mix</h2>
+      <div class="row">
+        <button class="ghost" id="mixPlay" type="button">Play</button>
+        <button class="ghost" id="mixStop" type="button">Stop</button>
+        <button class="bigbtn" id="mixExport" type="button" style="padding:8px 18px;font-size:14px">Export WAV</button>
+        <button class="ghost" id="mixClose" type="button">Close</button>
+      </div>
+    </div>
+    <p class="fine" id="mixStatus">Loading stems&hellip;</p>
+    <div class="buses" id="mixBuses"></div>
+    <div class="strips" id="mixStrips"></div>
+    <section class="panel" aria-label="Capture library">
+      <div class="libhead"><h2 style="font-size:20px">Capture library</h2>
+        <div class="row">
+          <input type="text" class="search" id="namQ" placeholder="Search captures" style="width:150px">
+          <label class="ghost" style="cursor:pointer">Upload .nam<input type="file" id="namFile" accept=".nam,application/json" hidden></label>
+          <button class="ghost warn" id="namDel" type="button">Delete</button>
+        </div>
+      </div>
+      <select id="namList" size="4" style="width:100%" aria-label="Saved captures"></select>
+      <p class="fine">Captures are files you upload &mdash; each carries its creator&rsquo;s license. Name them however you like. Live instrument input is coming later; this is just the library.</p>
+    </section>
+  </div>
 </div>
 
 <div class="player" aria-label="Player">
@@ -401,6 +450,10 @@ function renderList() {
       </div>
       <div class="acts">
         ${t.audioUrl ? `<a class="ghost" href="${t.audioUrl}?download" download>Download</a>` : ''}
+        ${t.status === 'ready' && t.stemStatus === 'none' ? `<button class="ghost" type="button" data-act="split" title="Split into vocals, drums, bass and other (${STEM_COST_CR} credits)">Split stems</button>` : ''}
+        ${t.stemStatus === 'separating' ? `<span class="badge st-generating">Splitting…</span>` : ''}
+        ${t.stemStatus === 'failed' ? `<button class="ghost" type="button" data-act="split" title="Retry stem splitting (${STEM_COST_CR} credits)">Retry split</button>` : ''}
+        ${t.stemStatus === 'ready' ? `<button class="ghost" type="button" data-act="mix" title="Open the studio mixer">Mix</button>` : ''}
         <button class="ghost" type="button" data-act="reuse" title="Load this song's settings into the composer">Reuse</button>
         <button class="ghost" type="button" data-act="remix" title="Same settings, new seed, one take">Remix</button>
         <button class="ghost${confirmDel.has(t.id) ? ' warn' : ''}" type="button" data-act="del">${confirmDel.has(t.id) ? 'Confirm delete' : busy ? 'Cancel' : 'Delete'}</button>
@@ -416,6 +469,16 @@ $('#list').addEventListener('click', async (e) => {
   const id = b.closest('.track').dataset.id; const t = tracks.find((x) => x.id === id); if (!t) return;
   const a = b.dataset.act;
   if (a === 'play') { if (t.status === 'ready') play(t); else if (t.status === 'failed') toast(t.error || 'This take failed'); else toast('Still generating'); }
+  else if (a === 'split') {
+    b.disabled = true;
+    try {
+      const d = await api('/api/tracks/' + id + '/stems', { method: 'POST' });
+      t.stemStatus = d.stems.every((s) => s.status === 'ready') ? 'ready' : (d.separating ? 'separating' : 'failed');
+      renderList(); startPolling(); await refreshMe();
+      toast(d.charged ? `Stem splitting started (${STEM_COST_CR} credits)` : t.stemStatus === 'ready' ? 'Stems are already split' : d.separating ? 'Stem splitting already in progress' : 'Stem splitting failed — credits refunded');
+    } catch (err) { toast(err.message); b.disabled = false; }
+  }
+  else if (a === 'mix') openMixer(id);
   else if (a === 'reuse') {
     $('#style').value = t.style; $('#lyrics').value = t.lyrics; $('#title').value = ''; $('#inst').checked = t.instrumental; $('#seed').value = '';
     if (providers.find((p) => p.id === t.providerId && p.ok)) { providerId = t.providerId; renderModels(); applyDurationRange(); }
@@ -433,7 +496,7 @@ $('#list').addEventListener('click', async (e) => {
 });
 
 let pollTimer = null;
-async function refresh() { try { const d = await api('/api/tracks'); tracks = d.tracks; renderList(); } catch (e) { /* keep last view */ } return tracks.some((t) => t.status === 'queued' || t.status === 'generating'); }
+async function refresh() { try { const d = await api('/api/tracks'); tracks = d.tracks; renderList(); } catch (e) { /* keep last view */ } return tracks.some((t) => t.status === 'queued' || t.status === 'generating' || t.stemStatus === 'separating'); }
 function startPolling() { if (pollTimer) return; pollTimer = setInterval(async () => { const busy = await refresh(); if (!busy) { clearInterval(pollTimer); pollTimer = null; } }, 4000); }
 
 /* ---------- player ---------- */
@@ -540,6 +603,251 @@ $('#authGo').onclick = submitAuth;
 $('#aPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
 $('#aEmail').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
 $('#logoutBtn').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); csrfToken = null; me = null; location.reload(); };
+
+/* ---------- studio mixer ---------- */
+const STEM_COST_CR = 6; // keep in sync with STEM_SEPARATION_CREDITS in lib/costs.mjs
+const BUS_LABEL = { master: 'Master', drums: 'Drums bus', vox: 'Vox bus' };
+const DEFAULT_BUS = { drums: 'drums', vocals: 'vox', bass: 'master', other: 'master' };
+const mix = {
+  trackId: null, stems: [], buffers: new Map(), settings: new Map(),
+  ctx: null, nodes: null, playing: false,
+  masterGain: 0.9, busGains: { drums: 1, vox: 1 },
+};
+
+const faderRow = (label, k, min, max, step, val, fmtFn) =>
+  `<label class="lbl">${label}<span class="fader"><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}"><output>${fmtFn(val)}</output></span></label>`;
+
+function renderMixer() {
+  const el = $('#mixStrips'); el.innerHTML = '';
+  for (const s of mix.stems) {
+    const st = mix.settings.get(s.id);
+    const d = document.createElement('div');
+    d.className = 'strip'; d.dataset.id = s.id;
+    d.innerHTML = `
+      <h4>${esc(s.name)}</h4>
+      <label class="lbl">Bus <select data-k="bus">${Object.entries(BUS_LABEL).map(([v, l]) => `<option value="${v}"${st.bus === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${faderRow('Volume', 'gain', 0, 1.5, 0.01, st.gain, (v) => (+v).toFixed(2))}
+      ${faderRow('Pan', 'pan', -1, 1, 0.01, st.pan, (v) => (+v).toFixed(2))}
+      <div class="msbtn"><button type="button" class="m" data-k="mute" aria-pressed="${st.mute}">Mute</button><button type="button" class="s" data-k="solo" aria-pressed="${st.solo}">Solo</button></div>
+      ${faderRow('Low', 'low', -15, 15, 0.5, st.low, (v) => (+v).toFixed(1) + ' dB')}
+      ${faderRow('Mid', 'mid', -15, 15, 0.5, st.mid, (v) => (+v).toFixed(1) + ' dB')}
+      ${faderRow('High', 'high', -15, 15, 0.5, st.high, (v) => (+v).toFixed(1) + ' dB')}`;
+    el.appendChild(d);
+  }
+  $('#mixBuses').innerHTML = ['drums', 'vox'].map((b) => `
+    <div class="bus"><h4>${BUS_LABEL[b]}</h4>
+      <label class="lbl">Bus volume<span class="fader"><input type="range" data-bus="${b}" min="0" max="1.5" step="0.01" value="${mix.busGains[b]}" aria-label="${BUS_LABEL[b]} volume"><output>${mix.busGains[b].toFixed(2)}</output></span></label>
+    </div>`).join('') + `
+    <div class="bus"><h4>Master</h4>
+      <label class="lbl">Master volume<span class="fader"><input type="range" id="mixMaster" min="0" max="1.5" step="0.01" value="${mix.masterGain}" aria-label="Master volume"><output>${mix.masterGain.toFixed(2)}</output></span></label>
+      <span class="fine">Master bus runs through a compressor (threshold &minus;18 dB, ratio 3:1).</span>
+    </div>`;
+}
+
+// One graph builder for both live playback and offline export: stems ->
+// per-stem EQ/gain/pan -> optional sub-bus -> master gain -> compressor.
+function buildGraph(ctx, buffers, settings, busGains, masterGain) {
+  const master = ctx.createGain(); master.gain.value = masterGain;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.ratio.value = 3; comp.attack.value = 0.003; comp.release.value = 0.25;
+  master.connect(comp); comp.connect(ctx.destination);
+  const buses = { master };
+  for (const b of ['drums', 'vox']) { const g = ctx.createGain(); g.gain.value = busGains[b]; g.connect(master); buses[b] = g; }
+  const anySolo = [...settings.values()].some((s) => s.solo);
+  const sources = [], chains = new Map();
+  for (const [id, st] of settings) {
+    const buf = buffers.get(id); if (!buf) continue;
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const low = ctx.createBiquadFilter(); low.type = 'lowshelf'; low.frequency.value = 220; low.gain.value = st.low;
+    const mid = ctx.createBiquadFilter(); mid.type = 'peaking'; mid.frequency.value = 2800; mid.Q.value = 1; mid.gain.value = st.mid;
+    const high = ctx.createBiquadFilter(); high.type = 'highshelf'; high.frequency.value = 8000; high.gain.value = st.high;
+    const g = ctx.createGain();
+    g.gain.value = st.mute ? 0 : (anySolo ? (st.solo ? st.gain : 0) : st.gain);
+    src.connect(low); low.connect(mid); mid.connect(high); high.connect(g);
+    let tail = g;
+    let pan = null;
+    if (ctx.createStereoPanner) { pan = ctx.createStereoPanner(); pan.pan.value = st.pan; g.connect(pan); tail = pan; }
+    tail.connect(buses[st.bus] || master);
+    sources.push(src); chains.set(id, { low, mid, high, g, pan });
+  }
+  return { master, comp, buses, sources, chains };
+}
+
+// Push a settings change into the live graph without restarting playback.
+function applyLive(id) {
+  const ch = mix.nodes && mix.nodes.chains.get(id); if (!ch) return;
+  const st = mix.settings.get(id);
+  ch.low.gain.value = st.low; ch.mid.gain.value = st.mid; ch.high.gain.value = st.high; ch.g.gain.value = effGain(id);
+  if (ch.pan) ch.pan.pan.value = st.pan;
+}
+function effGain(id) {
+  const st = mix.settings.get(id);
+  const anySolo = [...mix.settings.values()].some((s) => s.solo);
+  return st.mute ? 0 : (anySolo ? (st.solo ? st.gain : 0) : st.gain);
+}
+function refreshGains() { if (mix.nodes) for (const id of mix.nodes.chains.keys()) { const ch = mix.nodes.chains.get(id); ch.g.gain.value = effGain(id); } }
+
+async function decodeAll() {
+  if (!mix.ctx) mix.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  for (const s of mix.stems) {
+    if (mix.buffers.has(s.id)) continue;
+    const r = await fetch(s.audioUrl, { credentials: 'include' });
+    if (!r.ok) throw new Error('Could not load the ' + s.name + ' stem.');
+    mix.buffers.set(s.id, await mix.ctx.decodeAudioData(await r.arrayBuffer()));
+  }
+}
+
+function updateMixTransport() {
+  $('#mixPlay').textContent = mix.playing ? 'Playing…' : 'Play';
+  $('#mixPlay').disabled = mix.playing;
+}
+function mixStop() {
+  if (mix.nodes) { for (const s of mix.nodes.sources) { try { s.stop(); } catch {} } mix.nodes = null; }
+  if (mix.playing) { mix.playing = false; updateMixTransport(); }
+}
+async function mixPlay() {
+  try {
+    await decodeAll();
+    if (mix.ctx.state === 'suspended') await mix.ctx.resume();
+    mixStop();
+    mix.nodes = buildGraph(mix.ctx, mix.buffers, mix.settings, mix.busGains, mix.masterGain);
+    const t0 = mix.ctx.currentTime + 0.05;
+    for (const s of mix.nodes.sources) s.start(t0);
+    mix.playing = true; updateMixTransport();
+    $('#mixStatus').textContent = 'Playing — tweak the strips live.';
+  } catch (e) { $('#mixStatus').textContent = e.message; }
+}
+
+function encodeWav(buffer) {
+  const nCh = buffer.numberOfChannels, sr = buffer.sampleRate, len = buffer.length;
+  const dataBytes = len * nCh * 2, ab = new ArrayBuffer(44 + dataBytes), v = new DataView(ab);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, 'RIFF'); v.setUint32(4, 36 + dataBytes, true); wstr(8, 'WAVE'); wstr(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, nCh, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * nCh * 2, true); v.setUint16(32, nCh * 2, true); v.setUint16(34, 16, true);
+  wstr(36, 'data'); v.setUint32(40, dataBytes, true);
+  const chans = []; for (let c = 0; c < nCh; c++) chans.push(buffer.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < len; i++) for (let c = 0; c < nCh; c++) {
+    const x = Math.max(-1, Math.min(1, chans[c][i]));
+    v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7FFF, true); o += 2;
+  }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+async function mixExport() {
+  mixStop();
+  try {
+    await decodeAll();
+    $('#mixStatus').textContent = 'Rendering mix…';
+    let dur = 0; for (const b of mix.buffers.values()) dur = Math.max(dur, b.duration);
+    if (!dur) throw new Error('No audio decoded yet.');
+    const sr = mix.ctx.sampleRate; // same rate as decode: no pitch/speed shift
+    const off = new OfflineAudioContext(2, Math.ceil(sr * dur), sr);
+    const g = buildGraph(off, mix.buffers, mix.settings, mix.busGains, mix.masterGain);
+    for (const s of g.sources) s.start(0);
+    const rendered = await off.startRendering();
+    const blob = encodeWav(rendered);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (mix.trackId || 'mix').replace(/[^\w\-]+/g, '').slice(0, 40) + '-mix.wav';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    $('#mixStatus').textContent = 'Mix exported as WAV.';
+  } catch (e) { $('#mixStatus').textContent = e.message; }
+}
+
+async function openMixer(trackId) {
+  const t = tracks.find((x) => x.id === trackId); if (!t) return;
+  closeMixer();
+  mix.trackId = trackId;
+  mix.stems = []; mix.buffers = new Map(); mix.settings = new Map();
+  mix.nodes = null; mix.playing = false;
+  $('#mixTitle').textContent = 'Mix — ' + t.title;
+  $('#mixView').hidden = false;
+  $('#mixStatus').textContent = 'Loading stems…';
+  updateMixTransport();
+  loadNam('');
+  try {
+    const d = await api('/api/tracks/' + trackId + '/stems');
+    mix.stems = d.stems.filter((s) => s.status === 'ready' && s.audioUrl);
+    if (!mix.stems.length) { $('#mixStatus').textContent = 'No ready stems yet.'; return; }
+    for (const s of mix.stems)
+      mix.settings.set(s.id, { gain: 1, pan: 0, mute: false, solo: false, low: 0, mid: 0, high: 0, bus: DEFAULT_BUS[s.name] || 'master' });
+    renderMixer();
+    $('#mixStatus').textContent = mix.stems.length + ' stems loaded. Press Play, adjust the strips, then Export WAV.';
+  } catch (e) { $('#mixStatus').textContent = e.message; }
+}
+function closeMixer() {
+  mixStop();
+  if (mix.ctx) { mix.ctx.close().catch(() => {}); mix.ctx = null; }
+  $('#mixView').hidden = true;
+}
+
+$('#mixStrips').addEventListener('input', (e) => {
+  const strip = e.target.closest('.strip'); if (!strip) return;
+  const id = strip.dataset.id, st = mix.settings.get(id); if (!st) return;
+  const k = e.target.dataset.k; if (!k) return;
+  st[k] = e.target.type === 'range' ? +e.target.value : st[k];
+  const out = e.target.closest('.fader') && e.target.closest('.fader').querySelector('output');
+  if (out) out.textContent = k === 'gain' ? st[k].toFixed(2) : k === 'pan' ? (+st[k]).toFixed(2) : (+st[k]).toFixed(1) + ' dB';
+  applyLive(id);
+});
+$('#mixStrips').addEventListener('change', (e) => {
+  const strip = e.target.closest('.strip'); if (!strip) return;
+  const id = strip.dataset.id, st = mix.settings.get(id); if (!st) return;
+  if (e.target.dataset.k === 'bus') { st.bus = e.target.value; if (mix.playing) mixPlay(); } // re-route: rebuild
+});
+$('#mixStrips').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-k]'); if (!b) return;
+  const strip = b.closest('.strip'); const id = strip.dataset.id, st = mix.settings.get(id); if (!st) return;
+  const k = b.dataset.k; st[k] = !st[k]; b.setAttribute('aria-pressed', st[k]);
+  refreshGains();
+});
+$('#mixBuses').addEventListener('input', (e) => {
+  const out = e.target.closest('.fader') && e.target.closest('.fader').querySelector('output');
+  if (e.target.dataset.bus) {
+    mix.busGains[e.target.dataset.bus] = +e.target.value;
+    if (mix.nodes) mix.nodes.buses[e.target.dataset.bus].gain.value = +e.target.value;
+  } else if (e.target.id === 'mixMaster') {
+    mix.masterGain = +e.target.value;
+    if (mix.nodes) mix.nodes.master.gain.value = mix.masterGain;
+  }
+  if (out) out.textContent = (+e.target.value).toFixed(2);
+});
+$('#mixPlay').onclick = mixPlay;
+$('#mixStop').onclick = () => { mixStop(); $('#mixStatus').textContent = 'Stopped.'; };
+$('#mixExport').onclick = mixExport;
+$('#mixClose').onclick = closeMixer;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#mixView').hidden) closeMixer(); });
+
+/* ---------- NAM capture library ---------- */
+async function loadNam(q) {
+  try {
+    const d = await api('/api/nam?q=' + encodeURIComponent(q || ''));
+    $('#namList').innerHTML = d.captures.length
+      ? d.captures.map((c) => `<option value="${c.id}">${esc(c.name)} (${Math.max(1, Math.round(c.size / 1024))} KB)</option>`).join('')
+      : '<option disabled>No captures yet — upload a .nam file</option>';
+  } catch (e) { toast(e.message); }
+}
+$('#namQ').addEventListener('input', (e) => loadNam(e.target.value.trim()));
+$('#namFile').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const buf = await f.arrayBuffer();
+    const bytes = new Uint8Array(buf); let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    await api('/api/nam', { method: 'POST', body: JSON.stringify({ name: f.name.replace(/\.nam$/i, ''), data: btoa(bin) }) });
+    toast('Capture saved'); loadNam($('#namQ').value.trim());
+  } catch (err) { toast(err.message); }
+  e.target.value = '';
+});
+$('#namDel').onclick = async () => {
+  const id = $('#namList').value; if (!id) return;
+  if (!confirm('Delete this capture?')) return;
+  try { await api('/api/nam/' + id, { method: 'DELETE' }); toast('Capture deleted'); loadNam($('#namQ').value.trim()); }
+  catch (e) { toast(e.message); }
+};
 
 /* ---------- boot ---------- */
 async function boot() {
