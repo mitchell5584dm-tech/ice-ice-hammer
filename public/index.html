@@ -765,7 +765,7 @@ function updateMixTransport() {
   $('#mixPlay').disabled = mix.playing;
 }
 function mixStop() {
-  if (mix.nodes) { for (const s of mix.nodes.sources) { try { s.stop(); } catch {} } mix.nodes = null; }
+  if (mix.nodes) { const old = mix.nodes; mix.nodes = null; for (const s of old.sources) { try { s.stop(); } catch {} } }
   if (mix.playing) { mix.playing = false; updateMixTransport(); }
 }
 async function mixPlay() {
@@ -775,7 +775,11 @@ async function mixPlay() {
     mixStop();
     mix.nodes = buildGraph(mix.ctx, mix.buffers, mix.settings, mix.busGains, mix.masterGain);
     const t0 = mix.ctx.currentTime + 0.05;
-    for (const s of mix.nodes.sources) s.start(t0);
+    const graph = mix.nodes;
+    // Reset the transport when the longest stem ends (ignore stops from a rebuilt graph).
+    const longest = graph.sources.reduce((a, b) => (b.buffer.duration > a.buffer.duration ? b : a));
+    longest.onended = () => { if (mix.nodes === graph) { mix.nodes = null; mix.playing = false; updateMixTransport(); $('#mixStatus').textContent = 'Finished.'; } };
+    for (const s of graph.sources) s.start(t0);
     mix.playing = true; updateMixTransport();
     $('#mixStatus').textContent = 'Playing — tweak the strips live.';
   } catch (e) { $('#mixStatus').textContent = e.message; }
