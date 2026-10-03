@@ -234,6 +234,10 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:8px;paddi
     <div class="libhead"><h2>Plans</h2><span class="fine">Credits are debited before each generation and refunded if it fails.</span></div>
     <div class="plans" id="plans"><div class="fine">Loading plans…</div></div>
   </section>
+  <section class="panel" id="refPanel" aria-label="Referrals" style="margin-top:16px" hidden>
+    <div class="libhead"><h2>Referrals</h2><span class="fine">Earn 25% of subscriptions and 10% of credit packs from people you bring in, for 12 months.</span></div>
+    <div id="refBody"><div class="fine">Loading…</div></div>
+  </section>
 </div>
 
 <div class="mixwrap" id="mixView" hidden>
@@ -407,6 +411,7 @@ async function refreshMe() {
   updateCreditBanner();
   if (billingCfg) renderPlans();
   updateCreateBtn();
+  loadReferrals();
 }
 $('#createBtn').onclick = () => {
   const seed = $('#seed').value.trim();
@@ -574,6 +579,64 @@ async function openPortal(e) {
 $('#plansBtn').onclick = () => $('#plansPanel').scrollIntoView({ behavior: 'smooth' });
 $('#buyCreditsBtn').onclick = () => buyPack();
 $('#portalLink').onclick = openPortal;
+
+/* ---------- referrals ---------- */
+let refData = null;
+const money = (c) => '$' + (Number(c || 0) / 100).toFixed(2);
+async function loadReferrals() {
+  const panel = $('#refPanel');
+  if (!me) { panel.hidden = true; return; }
+  panel.hidden = false;
+  try { refData = await api('/api/referrals/me'); }
+  catch { $('#refBody').innerHTML = '<div class="fine">Could not load referral stats.</div>'; return; }
+  renderReferrals();
+}
+function renderReferrals() {
+  const d = refData, el = $('#refBody');
+  if (!d.code) {
+    el.innerHTML = `<p class="fine">Share Ice Ice Hammer and earn ${Math.round(d.rates.subscription * 100)}% of every subscription and ${Math.round(d.rates.pack * 100)}% of every credit pack your referrals buy, for ${d.rates.windowMonths} months after their first payment.</p>
+      <button class="planbtn" type="button" id="refGet">Get my referral link</button>`;
+    $('#refGet').onclick = async () => {
+      try { await api('/api/referrals/code', { method: 'POST' }); await loadReferrals(); }
+      catch (e) { toast(e.message); }
+    };
+    return;
+  }
+  const canPayout = d.balanceCents >= d.payoutThresholdCents;
+  el.innerHTML = `
+    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="text" id="refLink" readonly value="${esc(d.link)}" style="flex:1;min-width:220px" aria-label="Your referral link">
+      <button class="ghost" type="button" id="refCopy">Copy link</button>
+    </div>
+    <div class="plans" style="margin-top:12px">
+      <div class="tier"><h3>${d.clicks}</h3><div class="fine">Link clicks</div></div>
+      <div class="tier"><h3>${d.signups}</h3><div class="fine">Signups</div></div>
+      <div class="tier"><h3>${d.activeSubscribers}</h3><div class="fine">Paying subscribers</div></div>
+      <div class="tier"><h3>${money(d.balanceCents)}</h3><div class="fine">Earnings balance</div></div>
+      <div class="tier"><h3>${money(d.paidOutCents)}</h3><div class="fine">Paid out</div></div>
+    </div>
+    <p class="fine">Commissions accrue for ${d.rates.windowMonths} months from each referral's first payment. Payouts need a ${money(d.payoutThresholdCents)} balance and a connected Stripe account.</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+      ${d.connectReady ? '<span class="fine">✓ Payout account connected</span>' : '<button class="planbtn" type="button" id="refConnect">Connect payouts (Stripe)</button>'}
+      <button class="planbtn ghostbtn" type="button" id="refPayout" ${canPayout ? '' : 'disabled title="Reach the payout threshold first"'}>Request payout (${money(d.balanceCents)})</button>
+    </div>`;
+  $('#refCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText(d.link); toast('Link copied'); }
+    catch { const i = $('#refLink'); i.select(); document.execCommand('copy'); toast('Link copied'); }
+  };
+  const conn = $('#refConnect');
+  if (conn) conn.onclick = async () => {
+    try { const r = await api('/api/referrals/connect'); location.href = r.url; }
+    catch (e) { toast(e.message); }
+  };
+  $('#refPayout').onclick = async () => {
+    if (!confirm(`Request a payout of ${money(d.balanceCents)}?`)) return;
+    try {
+      const r = await api('/api/referrals/payout', { method: 'POST' });
+      toast(`Payout sent: ${money(r.amountCents)}`); await loadReferrals();
+    } catch (e) { toast(e.message); }
+  };
+}
 
 /* ---------- auth ---------- */
 let authMode = 'login';
