@@ -75,7 +75,7 @@ async function loadPlans(){
     const res=await fetch('/api/billing/config'); if(!res.ok) throw new Error('Plans are temporarily unavailable.');
     const data=await res.json(); const plans=data.plans||[];
     if(!plans.length){box.innerHTML='<p class="loading">Plans will be available soon.</p>';return;}
-    box.innerHTML=plans.map((p,i)=>`<article class="plan${i===1?' featured':''}"><h3>${escapeHtml(p.label)}</h3><div class="prices-row"><span class="price">$${(Number(p.price)/100).toFixed(2)}</span><span class="price-unit">/ month</span></div><p>${Number(p.monthlyCredits).toLocaleString()} credits each month${p.blurb?' · '+escapeHtml(p.blurb):''}</p><a class="btn ${i===1?'hot':''}" href="/studio">${i===1?'Start creating':'Choose '+escapeHtml(p.label)}</a></article>`).join('');
+    box.innerHTML=plans.map((p,i)=>`<article class="plan${i===1?' featured':''}"><h3>${escapeHtml(p.label)}</h3><div class="prices-row"><span class="price">$${Number(p.price).toFixed(2)}</span><span class="price-unit">/ month</span></div><p>${Number(p.monthlyCredits).toLocaleString()} credits each month${p.blurb?' · '+escapeHtml(p.blurb):''}</p><a class="btn ${i===1?'hot':''}" href="/studio">${i===1?'Start creating':'Choose '+escapeHtml(p.label)}</a></article>`).join('');
   }catch(e){box.innerHTML=`<p class="err">${escapeHtml(e.message||'Could not load plans.')}</p>`;}
 }
 loadPlans();
