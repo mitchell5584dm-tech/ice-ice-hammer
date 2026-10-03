@@ -1,0 +1,32 @@
+# One-click deploy on Render (Blueprint). Persistent disks need a paid instance type.
+services:
+  - type: web
+    name: ice-ice-hammer
+    runtime: node
+    plan: starter
+    buildCommand: npm install --omit=dev --no-audit --no-fund
+    startCommand: node server.mjs
+    healthCheckPath: /api/health
+    envVars:
+      - key: REPLICATE_API_TOKEN
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_STARTER
+        sync: false
+      - key: STRIPE_PRICE_CREATOR
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: STRIPE_PRICE_PACK
+        sync: false
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: ice-ice-hammer-data
+      mountPath: /var/data
+      sizeGB: 5
