@@ -748,7 +748,7 @@ async function handleAudio(req, res, user, id) {
 }
 
 async function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
+  const rel = pathname === '/' ? 'landing.html' : pathname === '/studio' ? 'index.html' : pathname.slice(1);
   const file = path.normalize(path.join(PUBLIC, rel));
   if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, 'Forbidden');
   try {
