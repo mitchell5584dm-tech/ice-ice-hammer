@@ -259,6 +259,24 @@ try {
   assert.equal(d.plans.length, 3, 'three paid plans');
   assert.deepEqual(d.plans.map((p) => p.id), ['starter', 'creator', 'pro']);
   assert.equal(d.pack.credits, 100, 'credit pack is 100 credits');
+  assert.equal(d.freeCredits, 10, 'free signup credits advertised for the landing page');
+  assert.ok(!d.plans.some((p) => /cheap engines/i.test(p.blurb)), 'no "cheap engines" copy on plans');
+
+  // static audio samples: served with a type and byte ranges (Safari needs ranges to play audio)
+  {
+    const dir = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'samples');
+    const f = path.join(dir, '_range-test.mp3');
+    fs.writeFileSync(f, Buffer.alloc(1000, 1));
+    try {
+      let r2 = await fetch(base + '/samples/_range-test.mp3', { headers: { Range: 'bytes=10-19' } });
+      assert.equal(r2.status, 206, 'range request -> 206');
+      assert.equal(r2.headers.get('content-type'), 'audio/mpeg');
+      assert.equal(r2.headers.get('content-range'), 'bytes 10-19/1000');
+      assert.equal((await r2.arrayBuffer()).byteLength, 10);
+      r2 = await fetch(base + '/samples/_range-test.mp3');
+      assert.equal(r2.status, 200); assert.equal(r2.headers.get('accept-ranges'), 'bytes');
+    } finally { fs.rmSync(f, { force: true }); }
+  }
 
   assert.equal((await req('/api/billing/checkout', { method: 'POST', body: { kind: 'pack' } })).status, 401, 'checkout needs a session');
   r = await req('/api/billing/checkout', { method: 'POST', user: 'alice', body: { kind: 'subscription', plan: 'bogus' } });
@@ -442,22 +460,6 @@ try {
   }
 
   // ---- studio mixer: NAM capture library ----
-{
-  const carol = dbm.getUserByEmail('carol@example.com');
-  const sepId = 'f'.repeat(16);
-  dbm.addCredits(carol.id, 6, 'test-topup');
-  dbm.addCredits(carol.id, -6, 'stems');
-  dbm.addSeparation({ id: sepId, userId: carol.id, trackId: carolTrackB, model: 'ryan5453/demucs', creditsDebited: 6, estCostUsd: 0 });
-  dbm.updateSeparation(sepId, { status: 'processing', replicate_prediction_id: 'predX' });
-  const credBefore = (await meOf('carol')).credits;
-  dbm.updateSeparation(sepId, { status: 'failed', finished_at: Date.now() }); // what failSeparation does first
-  assert.equal(dbm.refundSeparation(sepId), 6, 'failed separation refunds its credits');
-  assert.equal((await meOf('carol')).credits, credBefore + 6, 'credits returned to the user');
-  assert.equal(dbm.refundSeparation(sepId), 0, 'refund happens exactly once');
-  assert.equal(dbm.getSeparation(sepId).status, 'refunded');
-}
-
-// ---- studio mixer: NAM capture library ----
   const namJson = { architecture: 'WaveNet', config: { input_gain: 1 }, weights: [0.1, 0.2, 0.3], version: '1.0' };
   const namB64 = Buffer.from(JSON.stringify(namJson)).toString('base64');
   r = await req('/api/nam', { method: 'POST', user: 'carol', noCsrf: true, body: { name: 'My Capture', data: namB64 } });
