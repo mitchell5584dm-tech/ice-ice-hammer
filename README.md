@@ -1,30 +1,39 @@
 # Ice Ice Hammer
 
-Your own Suno-style song generator, now as a multi-user service (Phase 1).
+Your own Suno-style song generator, as a multi-user paid service.
 Write lyrics, describe a style, press Create, and get full songs with vocals.
 Songs are made by AI music models on [Replicate](https://replicate.com) and saved to your own library.
 
-**Phase 1 (SaaS):** email+password accounts, per-user libraries, credit-metered
-generation. Credits are debited *before* any Replicate call, so spend can never
-exceed balances. Free accounts get 10 credits once (after email verification)
-and can use the three cheapest engines; expensive engines need a paid plan
-(granted manually by an admin for now — billing UI is Phase 2).
+**How it makes money:** customers pay you through **Stripe**, and you pay
+Replicate for the AI models behind the scenes. Customers never see Replicate.
+
+- Email+password accounts, per-user libraries, credit-metered generation.
+- **Free:** 10 credits once (after email verification), ACE-Step and MusicGen only.
+- **Paid plans (Stripe subscriptions):** Starter $4.99/mo (60 credits), Creator
+  $8.99/mo (150 credits, adds MiniMax), Pro $19.99/mo (400 credits, adds ElevenLabs).
+  Credits are granted on purchase and on every renewal.
+- **Credit pack (Stripe one-time):** 100 credits for $6.99. Never expires, stacks on any plan.
+- Credits are debited *before* any Replicate call, so your Replicate spend can never
+  exceed what customers have paid for.
 
 - **Models:** ACE-Step (vocals, cheapest), MiniMax Music 2.5 (best singing), ElevenLabs Music, MusicGen and Stable Audio 2.5 (instrumental). Models that are unavailable on your account show as greyed out.
 - **Two takes per Create**, each with its own seed. You can Remix (same settings, new seed), Reuse (load settings back into the form), Download, and Delete.
 - **Generation runs on the server.** You can close the tab and come back.
-- **No dependencies.** Plain Node.js 22.5 or newer (uses built-in `node:sqlite`). No `npm install`, no build step.
+- **One dependency, for billing.** Plain Node.js 22.5 or newer (uses built-in `node:sqlite`), no build step. Stripe Checkout needs the `stripe` package, so run `npm install` once.
 
 ## Run it
 
 1. Install Node.js 22.5+ from https://nodejs.org.
-2. Get a Replicate API token: https://replicate.com/account/api-tokens (you need billing set up on Replicate).
+2. Get a Replicate API token: https://replicate.com/account/api-tokens (you need a card on Replicate: that pays for the AI models and is your cost, not your customers').
 3. Copy `.env.example` to `.env` and set `REPLICATE_API_TOKEN` and `SESSION_SECRET`.
    Set `EMAIL_AUTO_VERIFY=1` for local dev to skip email verification (the
    verification link is otherwise logged to the server console — no mail
    provider is wired up yet).
-4. Run: `node server.mjs`
-5. Open http://localhost:3000 and create an account. **The first account is the admin.**
+4. Billing: run `npm install`, then set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+   and the four `STRIPE_PRICE_*` ids in `.env` (use Stripe **test** keys first).
+   For local dev without Stripe keys, set `STRIPE_MOCK=1` instead.
+5. Run: `node server.mjs`
+6. Open http://localhost:3000 and create an account. **The first account is the admin.**
 
 ## How the SaaS bits work
 
@@ -38,8 +47,16 @@ and can use the three cheapest engines; expensive engines need a paid plan
   cost — re-tune from real invoices before launch). `/api/generate` debits
   *before* calling Replicate; failed tracks are refunded exactly once
   (`generation_ledger` + `credit_transactions` are append-only).
-- **Admin:** `GET /api/admin/spend` shows per-model and per-user spend. Grant
-  credits or change plans with SQLite directly for now, e.g.:
+- **Billing (Stripe):** `GET /api/billing/config` (public plan list),
+  `POST /api/billing/checkout` (subscription or credit pack → Stripe Checkout),
+  `GET /api/billing/portal` (Stripe customer portal: change plan, cancel, update card),
+  `POST /api/billing/webhook`. The webhook verifies Stripe's signature and handles
+  `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed` and
+  `customer.subscription.deleted`. Every event is recorded, so a retried delivery
+  can never grant credits twice. Without `STRIPE_SECRET_KEY` the app still runs and
+  the Plans panel says billing is not configured.
+- **Admin:** `GET /api/admin/spend` shows per-model and per-user spend. To grant
+  credits by hand (refunds, comps), use SQLite, e.g.:
   `sqlite3 data/ice.db "UPDATE users SET credits = credits + 100 WHERE email='someone@example.com'"`.
 - **Storage:** `DATA_DIR/ice.db` (SQLite) + `DATA_DIR/audio/<userId>/…`.
   Migrating an old single-user `data/library.json` library:
@@ -68,7 +85,7 @@ Run it nightly, e.g.:
 - API responses are `Cache-Control: no-store`; the HTML shell is `no-cache`
   (revalidated each load); audio streams are `private, max-age=86400`.
 - Signup/login are rate-limited per IP (10/min). The session cookie is
-  `HttpOnly` + `SameSite=Lax`; set `COOKIE_SECURE=1` behind HTTPS.
+  `HttpOnly` + `SameSite=Lax`; set `COOKIE_SECURE=1` behind HTTPS (`render.yaml` sets it).
 - Email verification links are single-use 48-hex-char tokens.
 - `SESSION_SECRET` must be set in production — without it sessions (and CSRF
   tokens) do not survive restarts.
@@ -77,15 +94,22 @@ Run it nightly, e.g.:
 
 1. Push this folder to a GitHub repo.
 2. In Render, choose **New → Blueprint** and pick the repo. It reads `render.yaml`.
-3. When asked, set `REPLICATE_API_TOKEN` and `SESSION_SECRET`.
+3. When asked, set `REPLICATE_API_TOKEN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+   and the four `STRIPE_PRICE_*` ids. `SESSION_SECRET` is generated for you.
+4. In the Stripe dashboard, add a webhook endpoint at
+   `https://<your-app>.onrender.com/api/billing/webhook` with the four events above,
+   and copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
 
 `render.yaml` attaches a 5 GB disk so the database and songs survive restarts. Disks need a paid instance (Starter). Without a disk, everything is wiped on every deploy.
 
 Docker also works: `docker build -t ich . && docker run -p 3000:3000 -v ich-data:/data --env-file .env ich`
 
-## Costs
+## Costs and revenue
 
-You pay Replicate per song, at the price shown on each model's page. Open-source models like ACE-Step bill for GPU time and usually cost a few cents per song. Hosted models like MiniMax and ElevenLabs charge a fixed amount per song, which is usually more. Two takes cost twice as much. Check current prices on Replicate before heavy use.
+**Revenue:** customers pay through Stripe (plans and credit packs above). Stripe
+takes its processing fee from each payment.
+
+**Costs:** you pay Replicate per song, at the price shown on each model's page. Open-source models like ACE-Step bill for GPU time and usually cost a few cents per song. Hosted models like MiniMax and ElevenLabs charge a fixed amount per song, which is usually more. Two takes cost twice as much. Check current prices on Replicate before heavy use.
 
 Users spend *credits*, not your Replicate balance directly: each model has a
 per-take credit price in `lib/costs.mjs` (~2.5–3× estimated Replicate cost),
@@ -156,6 +180,7 @@ To add a model, add an entry to `lib/providers.mjs` with its Replicate `owner/na
 | `lib/providers.mjs` | The list of models |
 | `lib/db.mjs` | SQLite store: users, per-user tracks, generation ledger, credit transactions, separations, stems, NAM captures |
 | `lib/costs.mjs` | Per-model credit prices and tier model access (incl. stem-separation price) |
+| `lib/billing.mjs` | Stripe Checkout, customer portal and webhook handling |
 | `lib/auth.mjs` | scrypt password hashing, signed cookie sessions, verification stub, CSRF tokens |
 | `lib/ratelimit.mjs` | In-memory per-IP sliding-window rate limiter (auth endpoints) |
 | `scripts/migrate-json.mjs` | One-shot migration: old `library.json` → SQLite + per-user audio (`npm run migrate`) |
