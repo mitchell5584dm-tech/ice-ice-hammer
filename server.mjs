@@ -9,12 +9,16 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PROVIDERS, getProvider } from './lib/providers.mjs';
-import { getModelInfo, buildInput, createPrediction, getPrediction, cancelPrediction, pickAudioUrl } from './lib/replicate.mjs';
+import { getModelInfo, buildInput, createPrediction, getPrediction, cancelPrediction, pickAudioUrl, buildSeparationInput, pickStemUrls } from './lib/replicate.mjs';
 import {
   initDb, transact, userCount, createUser, getUserById, getUserByEmail, getUserByVerifyToken,
   addCredits, setUserVerified, setUserPlan, cryptoId,
   addTrack, getTrack, listTracks, listActiveTracks, listStuckTracks, updateTrack, removeTrack,
   activeCountForUser, addLedgerEntry, markLedgerDone, refundLedger, spendSummary, AUDIO_DIR,
+  addSeparation, updateSeparation, getSeparation, refundSeparation, markSeparationDone, listActiveSeparations,
+  listStuckSeparations, activeSeparationCountForUser,
+  addStem, getStemForUser, listStemsForTrack, updateStem, removeStemsForTrack, stemStatusForTrack,
+  addNamCapture, getNamCapture, listNamCaptures, removeNamCapture,
 } from './lib/db.mjs';
 import {
   hashPassword, verifyPassword, signSession, getSessionUserId, parseCookies,
@@ -22,7 +26,7 @@ import {
   csrfTokenFor, verifyCsrfToken,
 } from './lib/auth.mjs';
 import { checkRateLimit, clientIp } from './lib/ratelimit.mjs';
-import { costFor, canUseModel, estUsdFor, FREE_SIGNUP_CREDITS, ELEVENLABS_MAX_DURATION, ELEVENLABS_CREDITS_PER_SEC, costLabel, PLANS } from './lib/costs.mjs';
+import { costFor, canUseModel, estUsdFor, FREE_SIGNUP_CREDITS, ELEVENLABS_MAX_DURATION, ELEVENLABS_CREDITS_PER_SEC, costLabel, PLANS, STEM_MODEL, STEM_MODEL_VARIANT, STEM_SEPARATION_CREDITS, STEM_NAMES, STEM_USER_MAX_ACTIVE, stemCostLabel, EST_USD_PER_CREDIT } from './lib/costs.mjs';
 import {
   billingEnabled, billingConfig, createCheckoutSession, createPortalSession,
   verifyWebhookSignature, handleWebhookEvent,
@@ -132,6 +136,13 @@ const publicTrack = (t) => ({
   id: t.id, title: t.title, style: t.style, lyrics: t.lyrics, instrumental: t.instrumental, duration: t.duration,
   seed: t.seed, providerId: t.providerId, take: t.take, status: t.status, error: t.error || null, notes: t.notes || [],
   createdAt: t.createdAt, finishedAt: t.finishedAt || null, audioUrl: t.audioFile ? `/api/audio/${t.id}` : null,
+  stemStatus: stemStatusForTrack(t.userId, t.id),
+});
+
+const publicStem = (s) => ({
+  id: s.id, name: s.name, status: s.status, error: s.error || null,
+  createdAt: s.createdAt, finishedAt: s.finishedAt || null,
+  audioUrl: s.audioFile ? `/api/audio/${s.id}` : null,
 });
 
 function baseUrl(req) {
@@ -285,6 +296,178 @@ async function downloadAudio(track, url) {
   return file;
 }
 
+// ---------- Studio Mixer: stem separation ----------
+// Mark a separation failed, fail its stems, and refund its debited credits exactly once.
+function failSeparation(userId, separationId, error) {
+  updateSeparation(separationId, { status: 'failed', finished_at: Date.now() });
+  const trackId = (getSeparation(separationId) || {}).track_id;
+  for (const s of listStemsForTrack(userId, trackId)) {
+    if (s.separationId === separationId && s.status !== 'ready')
+      updateStem(s.id, { status: 'failed', error: String(error || 'Separation failed').slice(0, 400), finished_at: Date.now() });
+  }
+  const refunded = refundSeparation(separationId);
+  if (refunded) console.log(`[credits] refunded ${refunded} credits for failed separation ${separationId}`);
+}
+
+// The track's mixed audio goes to the model as a data URI: /api/audio URLs are
+// login-walled, so a public URL is not an option. Guard the size so one huge
+// file can't blow up the prediction JSON.
+function audioDataUri(userId, audioFile) {
+  const file = path.join(AUDIO_DIR, userId, audioFile);
+  const stat = fs.statSync(file);
+  const MAX_BYTES = 32 * 1024 * 1024;
+  if (stat.size > MAX_BYTES) throw Object.assign(new Error('This song file is too large to separate (32 MB limit).'), { status: 400 });
+  const ext = path.extname(audioFile).slice(1).toLowerCase();
+  const mime = AUDIO_MIME[ext] || 'audio/mpeg';
+  const b64 = fs.readFileSync(file).toString('base64');
+  return `data:${mime};base64,${b64}`;
+}
+
+async function startSeparation(user, track, separation) {
+  try {
+    const info = await getModelInfo(STEM_MODEL);
+    const input = buildSeparationInput(info, {
+      audioDataUri: audioDataUri(user.id, track.audioFile),
+      modelName: STEM_MODEL_VARIANT,
+    });
+    const pred = await createPrediction({ model: STEM_MODEL }, input);
+    updateSeparation(separation.id, { status: 'processing', replicate_prediction_id: pred.id });
+  } catch (e) {
+    failSeparation(user.id, separation.id, e.message);
+  }
+}
+
+async function downloadStemAudio(stem, url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not download the ${stem.name} stem (HTTP ${res.status}).`);
+  const extFromUrl = (url.split('?')[0].match(/\.(mp3|wav|flac|ogg|m4a|aac)$/i) || [])[1];
+  const ext = (extFromUrl || 'mp3').toLowerCase();
+  const file = `${stem.id}.${ext}`;
+  await fsp.mkdir(path.join(AUDIO_DIR, stem.userId), { recursive: true });
+  await fsp.writeFile(path.join(AUDIO_DIR, stem.userId, file), Buffer.from(await res.arrayBuffer()));
+  return file;
+}
+
+// POST /api/tracks/:id/stems — split a finished song into stems. Debits credits
+// FIRST (same choke point as generation); refunds on failure. Idempotent: if the
+// track already has ready stems they are returned without charging again.
+async function handleStemSeparation(req, res, user, trackId) {
+  const track = getTrack(user.id, trackId);
+  if (!track) return send(res, 404, { error: 'Not found' });
+  if (!user.verified) return send(res, 403, { error: 'Verify your email before splitting stems. Check the server log for your verification link.' });
+  if (track.status !== 'ready' || !track.audioFile)
+    return send(res, 400, { error: 'This song is not finished yet. Split stems once it is ready.' });
+
+  const existing = listStemsForTrack(user.id, trackId);
+  if (existing.length && existing.every((s) => s.status === 'ready'))
+    return send(res, 200, { stems: existing.map(publicStem), charged: false });
+  if (existing.some((s) => s.status === 'queued' || s.status === 'processing'))
+    return send(res, 200, { stems: existing.map(publicStem), charged: false, separating: true });
+  // A previous attempt failed: clear its rows so this run starts clean.
+  if (existing.length) {
+    for (const s of removeStemsForTrack(user.id, trackId)) {
+      if (s.audioFile) await fsp.rm(path.join(AUDIO_DIR, user.id, s.audioFile), { force: true });
+    }
+  }
+
+  if (activeSeparationCountForUser(user.id) >= STEM_USER_MAX_ACTIVE)
+    return send(res, 429, { error: `You can only separate ${STEM_USER_MAX_ACTIVE} songs at once. Wait for one to finish.` });
+  if (listActiveSeparations().length + listActiveTracks().length >= MAX_ACTIVE)
+    return send(res, 429, { error: 'The server is busy. Try again in a minute.' });
+
+  // THE choke point: debit BEFORE any Replicate call. 402 when broke.
+  try {
+    addCredits(user.id, -STEM_SEPARATION_CREDITS, 'stems');
+  } catch (e) {
+    return send(res, e.status || 500, { error: e.status === 402 ? `Out of credits (${user.credits} left, stem splitting needs ${STEM_SEPARATION_CREDITS}).` : e.message });
+  }
+
+  const separation = addSeparation({
+    id: newId(), userId: user.id, trackId: track.id, model: STEM_MODEL,
+    creditsDebited: STEM_SEPARATION_CREDITS, estCostUsd: STEM_SEPARATION_CREDITS * EST_USD_PER_CREDIT,
+  });
+  const stems = transact(() => STEM_NAMES.map((name) =>
+    addStem({ id: newId(), userId: user.id, trackId: track.id, separationId: separation.id, name })
+  ));
+  await startSeparation(user, track, separation);
+  const sep = getSeparation(separation.id);
+  const failed = sep.status === 'failed'; // synchronous failure: already refunded
+  send(res, 200, {
+    stems: listStemsForTrack(user.id, trackId).map(publicStem),
+    charged: !failed,
+    separating: !failed,
+  });
+}
+
+// GET /api/tracks/:id/stems — list a track's stems (empty until separated).
+async function handleStemList(req, res, user, trackId) {
+  const track = getTrack(user.id, trackId);
+  if (!track) return send(res, 404, { error: 'Not found' });
+  return send(res, 200, { stems: listStemsForTrack(user.id, trackId).map(publicStem), cost: stemCostLabel() });
+}
+
+// ---------- Studio Mixer: NAM capture library ----------
+const NAM_MAX_BYTES = 2 * 1024 * 1024; // .nam files are small JSON; 2 MB is generous
+
+// A .nam file is JSON with a "weights" array (and usually "architecture").
+// Light validation: it must parse, be an object, and carry weights.
+function validateNamUpload(dataB64) {
+  let buf;
+  try { buf = Buffer.from(String(dataB64 || ''), 'base64'); }
+  catch { throw Object.assign(new Error('Capture data must be base64.'), { status: 400 }); }
+  if (!buf.length || buf.length > NAM_MAX_BYTES)
+    throw Object.assign(new Error('Capture file must be under 2 MB.'), { status: 400 });
+  let parsed;
+  try { parsed = JSON.parse(buf.toString('utf8')); }
+  catch { throw Object.assign(new Error('This does not look like a .nam file (not JSON).'), { status: 400 }); }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.weights))
+    throw Object.assign(new Error('This does not look like a .nam file (no weights found).'), { status: 400 });
+  return buf;
+}
+
+async function handleNamUpload(req, res, user) {
+  const body = await readJson(req, 4 * 1024 * 1024);
+  const name = clean(body.name, 80).trim() || 'Untitled capture';
+  const buf = validateNamUpload(body.data);
+  const id = newId();
+  const dir = path.join(AUDIO_DIR, user.id, 'nam');
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, `${id}.nam`), buf);
+  const cap = addNamCapture({ id, userId: user.id, name, file: `${id}.nam`, size: buf.length });
+  return send(res, 200, { capture: { id: cap.id, name: cap.name, size: cap.size, createdAt: cap.created_at } });
+}
+
+async function handleNamList(req, res, user) {
+  const q = (new URL(req.url, 'http://x').searchParams.get('q') || '').toLowerCase();
+  const all = listNamCaptures(user.id)
+    .filter((c) => !q || c.name.toLowerCase().includes(q))
+    .map((c) => ({ id: c.id, name: c.name, size: c.size, createdAt: c.created_at, downloadUrl: `/api/nam/${c.id}` }));
+  return send(res, 200, { captures: all });
+}
+
+async function handleNamDownload(req, res, user, id) {
+  const cap = getNamCapture(user.id, id);
+  if (!cap) return send(res, 404, { error: 'Not found' });
+  const file = path.join(AUDIO_DIR, user.id, 'nam', cap.file);
+  let stat;
+  try { stat = await fsp.stat(file); } catch { return send(res, 404, { error: 'Capture file is missing.' }); }
+  const safeName = cap.name.replace(/[^\w\- ]+/g, '').trim() || 'capture';
+  res.writeHead(200, {
+    ...SECURITY_HEADERS, 'Content-Type': 'application/json', 'Content-Length': stat.size,
+    'Cache-Control': 'private, max-age=86400',
+    'Content-Disposition': `attachment; filename="${safeName}.nam"`,
+  });
+  fs.createReadStream(file).pipe(res);
+}
+
+async function handleNamDelete(req, res, user, id) {
+  const cap = getNamCapture(user.id, id);
+  if (!cap) return send(res, 404, { error: 'Not found' });
+  removeNamCapture(user.id, id);
+  await fsp.rm(path.join(AUDIO_DIR, user.id, 'nam', cap.file), { force: true });
+  return send(res, 200, { ok: true });
+}
+
 let polling = false;
 async function pollOnce() {
   if (polling) return; polling = true;
@@ -309,6 +492,44 @@ async function pollOnce() {
       } catch (e) {
         if (e.status === 404) failTrack(t.userId, t.id, 'Replicate no longer has this job.');
         else console.warn(`poll ${t.id}:`, e.message);
+      }
+    }
+    // Studio Mixer: stem separations finish on the same poll loop.
+    for (const s of listActiveSeparations()) {
+      try {
+        if (Date.now() - s.created_at > GIVE_UP_MS) {
+          await cancelPrediction(s.replicate_prediction_id);
+          failSeparation(s.user_id, s.id, 'Timed out after 25 minutes.');
+          continue;
+        }
+        const p = await getPrediction(s.replicate_prediction_id);
+        if (p.status === 'succeeded') {
+          const urls = pickStemUrls(p.output, STEM_NAMES);
+          const missing = STEM_NAMES.filter((n) => !urls[n]);
+          if (missing.length) { failSeparation(s.user_id, s.id, `The model finished but returned no audio for: ${missing.join(', ')}.`); continue; }
+          const stems = listStemsForTrack(s.user_id, s.track_id).filter((st) => st.separationId === s.id);
+          for (const name of STEM_NAMES) {
+            const stem = stems.find((st) => st.name === name);
+            if (!stem) continue;
+            try {
+              const audioFile = await downloadStemAudio(stem, urls[name]);
+              updateStem(stem.id, { status: 'ready', audio_file: audioFile, finished_at: Date.now() });
+            } catch (e) {
+              updateStem(stem.id, { status: 'failed', error: String(e.message).slice(0, 400), finished_at: Date.now() });
+            }
+          }
+          const after = listStemsForTrack(s.user_id, s.track_id).filter((st) => st.separationId === s.id);
+          if (after.every((st) => st.status === 'ready')) {
+            markSeparationDone(s.id);
+          } else {
+            failSeparation(s.user_id, s.id, 'One or more stems could not be downloaded.');
+          }
+        } else if (p.status === 'failed' || p.status === 'canceled') {
+          failSeparation(s.user_id, s.id, p.error ? String(p.error).slice(0, 400) : `Separation ${p.status}.`);
+        }
+      } catch (e) {
+        if (e.status === 404) failSeparation(s.user_id, s.id, 'Replicate no longer has this job.');
+        else console.warn(`poll separation ${s.id}:`, e.message);
       }
     }
   } finally { polling = false; }
@@ -403,14 +624,15 @@ async function handleGenerate(req, res, user) {
 }
 
 async function handleAudio(req, res, user, id) {
-  const t = getTrack(user.id, id);
+  // Tracks and stems share the /api/audio/:id namespace (both are 16-hex ids).
+  const t = getTrack(user.id, id) || getStemForUser(user.id, id);
   if (!t || !t.audioFile) return send(res, 404, { error: 'No audio for this track.' });
   const file = path.join(AUDIO_DIR, user.id, t.audioFile);
   let stat;
   try { stat = await fsp.stat(file); } catch { return send(res, 404, { error: 'Audio file is missing.' }); }
   const ext = path.extname(file).slice(1);
   const type = AUDIO_MIME[ext] || 'application/octet-stream';
-  const safeName = t.title.replace(/[^\w\- ]+/g, '').trim() || 'song';
+  const safeName = (t.title || t.name || 'stem').replace(/[^\w\- ]+/g, '').trim() || 'audio';
   const headers = { ...SECURITY_HEADERS, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400' };
   if (new URL(req.url, 'http://x').searchParams.has('download')) headers['Content-Disposition'] = `attachment; filename="${safeName}${t.take ? ' (' + t.take + ')' : ''}.${ext}"`;
   const range = req.headers.range && req.headers.range.match(/bytes=(\d*)-(\d*)/);
@@ -440,6 +662,8 @@ const server = http.createServer(async (req, res) => {
   try {
     const { pathname } = new URL(req.url, 'http://x');
     const m = pathname.match(/^\/api\/(tracks|audio)\/([a-f0-9]{16})$/);
+    const sm = pathname.match(/^\/api\/tracks\/([a-f0-9]{16})\/stems$/); // stem list + split
+    const nm = pathname.match(/^\/api\/nam(?:\/([a-f0-9]{16}))?$/);      // NAM library
 
     // CSRF gate for cookie-authenticated state changes (skips signup/login,
     // the signature-authenticated Stripe webhook, and sessionless requests).
@@ -488,12 +712,33 @@ const server = http.createServer(async (req, res) => {
       if (!t) return send(res, 404, { error: 'Not found' });
       const wasQueued = t.status === 'queued';
       if (t.status === 'generating' && t.predictionId) await cancelPrediction(t.predictionId);
+      // Cancel any in-flight separation and remove its stems (files + rows).
+      for (const s of listStemsForTrack(user.id, t.id)) {
+        if (s.audioFile) await fsp.rm(path.join(AUDIO_DIR, user.id, s.audioFile), { force: true });
+      }
+      removeStemsForTrack(user.id, t.id);
+      for (const s of listStuckSeparations().filter((x) => x.user_id === user.id && x.track_id === t.id)) {
+        if (s.replicate_prediction_id) await cancelPrediction(s.replicate_prediction_id);
+        updateSeparation(s.id, { status: 'failed', finished_at: Date.now() });
+        refundSeparation(s.id);
+      }
       await removeTrack(user.id, t.id);
       if (wasQueued) refundLedger(t.id); // never started: full refund
       if (t.audioFile) await fsp.rm(path.join(AUDIO_DIR, user.id, t.audioFile), { force: true });
       return send(res, 200, { ok: true });
     }
     if (m && m[1] === 'audio' && req.method === 'GET') return await handleAudio(req, res, requireUser(req), m[2]);
+
+    // Studio Mixer: stems.
+    if (sm && req.method === 'GET') return await handleStemList(req, res, requireUser(req), sm[1]);
+    if (sm && req.method === 'POST') return await handleStemSeparation(req, res, requireUser(req), sm[1]);
+
+    // Studio Mixer: NAM capture library.
+    if (nm && !nm[1] && req.method === 'GET') return await handleNamList(req, res, requireUser(req));
+    if (nm && !nm[1] && req.method === 'POST') return await handleNamUpload(req, res, requireUser(req));
+    if (nm && nm[1] && req.method === 'GET') return await handleNamDownload(req, res, requireUser(req), nm[1]);
+    if (nm && nm[1] && req.method === 'DELETE') return await handleNamDelete(req, res, requireUser(req), nm[1]);
+
     if (pathname.startsWith('/api/')) return send(res, 404, { error: 'Unknown endpoint' });
     if (req.method === 'GET') return await serveStatic(req, res, pathname);
     send(res, 405, 'Method not allowed');
@@ -508,6 +753,11 @@ initDb();
 for (const t of listStuckTracks()) {
   if (t.status === 'generating' && t.predictionId) await cancelPrediction(t.predictionId);
   failTrack(t.userId, t.id, 'Server restarted before this job finished.');
+}
+// Same for stem separations left mid-run.
+for (const s of listStuckSeparations()) {
+  if (s.replicate_prediction_id) await cancelPrediction(s.replicate_prediction_id);
+  failSeparation(s.user_id, s.id, 'Server restarted before this separation finished.');
 }
 setInterval(pollOnce, POLL_MS).unref();
 server.listen(PORT, () => {

@@ -18,7 +18,9 @@ let n = 0;
 const SCHEMAS = {
   'lucataco/ace-step': { tags: { type: 'string' }, lyrics: { type: 'string' }, duration: { type: 'number', minimum: 1, maximum: 240 }, seed: { type: 'integer', default: -1 } },
   'meta/musicgen': { prompt: { type: 'string' }, duration: { type: 'integer', maximum: 30 }, output_format: { type: 'string', enum: ['wav', 'mp3'] } },
+  'ryan5453/demucs': { audio: { type: 'string' }, model_name: { type: 'string', enum: ['htdemucs', 'htdemucs_ft'], default: 'htdemucs' }, output_format: { type: 'string', enum: ['mp3', 'wav'], default: 'mp3' } },
 };
+const demucsPreds = new Set();
 
 const mock = http.createServer(async (req, res) => {
   const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
@@ -34,11 +36,16 @@ const mock = http.createServer(async (req, res) => {
     let b = ''; for await (const c of req) b += c;
     const body = JSON.parse(b); seen.push(body);
     const id = 'pred' + (++n);
+    if (body.version === 'ver-demucs') demucsPreds.add(id);
     return json(201, { id, status: 'starting' });
   }
   if ((m = url.match(/^\/v1\/predictions\/(pred\d+)$/))) {
     polls[m[1]] = (polls[m[1]] || 0) + 1;
     if (polls[m[1]] < 2) return json(200, { id: m[1], status: 'processing' });
+    if (demucsPreds.has(m[1])) {
+      const stem = (name) => `http://127.0.0.1:${MOCK_PORT}/files/${m[1]}-${name}.mp3`;
+      return json(200, { id: m[1], status: 'succeeded', output: { vocals: stem('vocals'), drums: stem('drums'), bass: stem('bass'), other: stem('other') } });
+    }
     return json(200, { id: m[1], status: 'succeeded', output: [`http://127.0.0.1:${MOCK_PORT}/files/${m[1]}.mp3`] });
   }
   if ((m = url.match(/^\/v1\/predictions\/(pred\d+)\/cancel$/))) return json(200, {});
@@ -342,6 +349,126 @@ try {
     body: whPayload,
   });
   assert.equal(whRes.status, 200, 'webhook skips CSRF even with a session cookie');
+
+  // ---- studio mixer: stem separation (mock demucs) ----
+  r = await req('/api/auth/signup', { method: 'POST', user: 'carol', body: { email: 'carol@example.com', password: 'carol-pass-1' } });
+  assert.equal(r.status, 200);
+  await verifyUser('carol@example.com');
+  assert.equal((await meOf('carol')).credits, 10, 'carol starts with 10 credits');
+
+  r = await req('/api/generate', { method: 'POST', user: 'carol', body: { providerId: 'ace-step', style: 'funk', lyrics: 'get down', takes: 1 } });
+  assert.equal(r.status, 200);
+  const carolTrackA = (await j(r)).tracks[0].id;
+  await waitForReady('carol');
+  assert.equal((await meOf('carol')).credits, 8, 'carol debited 2 for 1 take');
+
+  // stem list before splitting
+  d = await j(await req(`/api/tracks/${carolTrackA}/stems`, { user: 'carol' }));
+  assert.deepEqual(d.stems, [], 'no stems before splitting');
+  assert.equal(d.cost, '6 credits/song', 'stem cost advertised');
+  assert.equal((await req('/api/tracks/0123456789abcdef/stems', { user: 'carol' })).status, 404, 'stems of unknown track -> 404');
+  assert.equal((await req(`/api/tracks/${carolTrackA}/stems`, { method: 'POST', user: 'carol', noCsrf: true, body: {} })).status, 403, 'stem split needs CSRF');
+
+  // debit-first split
+  r = await req(`/api/tracks/${carolTrackA}/stems`, { method: 'POST', user: 'carol', body: {} });
+  d = await j(r);
+  assert.equal(r.status, 200, JSON.stringify(d));
+  assert.equal(d.charged, true, 'first split charges');
+  assert.equal(d.stems.length, 4, 'four stems created');
+  assert.deepEqual(d.stems.map((s) => s.name).sort(), ['bass', 'drums', 'other', 'vocals']);
+  assert.equal((await meOf('carol')).credits, 2, '6 credits debited for separation');
+
+  // the demucs input got the mixed audio as a data URI + the htdemucs variant
+  const demucsCall = seen.find((b) => b.version === 'ver-demucs');
+  assert.ok(demucsCall, 'a demucs prediction was created');
+  assert.match(demucsCall.input.audio, /^data:audio\/mpeg;base64,/, 'mixed audio sent as data URI');
+  assert.equal(demucsCall.input.model_name, 'htdemucs', 'htdemucs variant selected');
+  assert.equal(demucsCall.input.output_format, 'mp3', 'mp3 output selected');
+
+  // wait for stems to finish, then they stream like track audio
+  let stems;
+  for (let i = 0; i < 60; i++) {
+    stems = (await j(await req(`/api/tracks/${carolTrackA}/stems`, { user: 'carol' }))).stems;
+    if (stems.length === 4 && stems.every((s) => s.status === 'ready')) break;
+    await sleep(200);
+  }
+  assert.ok(stems.every((s) => s.status === 'ready'), 'all four stems finished');
+  assert.ok(stems.every((s) => s.audioUrl), 'every stem has an audio URL');
+  const stemAudio = await req(stems[0].audioUrl, { user: 'carol' });
+  assert.equal(stemAudio.status, 200, 'stem audio streams');
+  assert.equal(stemAudio.headers.get('content-length'), '5000');
+  assert.equal((await req(stems[0].audioUrl, { user: 'alice' })).status, 404, 'other users cannot stream stems');
+
+  // idempotent: splitting again charges nothing
+  r = await req(`/api/tracks/${carolTrackA}/stems`, { method: 'POST', user: 'carol', body: {} });
+  d = await j(r);
+  assert.equal(d.charged, false, 're-split of ready stems is free');
+  assert.equal((await meOf('carol')).credits, 2, 'no double charge');
+
+  // 400 when the song is not ready yet
+  r = await req('/api/auth/signup', { method: 'POST', user: 'dave', body: { email: 'dave@example.com', password: 'dave-pass-22' } });
+  assert.equal(r.status, 200);
+  await verifyUser('dave@example.com');
+  r = await req('/api/generate', { method: 'POST', user: 'dave', body: { providerId: 'ace-step', style: 'rock', lyrics: 'loud', takes: 1 } });
+  const daveTrack = (await j(r)).tracks[0].id;
+  r = await req(`/api/tracks/${daveTrack}/stems`, { method: 'POST', user: 'dave', body: {} });
+  assert.equal(r.status, 400, 'cannot split an unfinished song');
+  await waitForReady('dave');
+
+  // 402 when broke: carol has 2 credits, splitting needs 6
+  r = await req('/api/generate', { method: 'POST', user: 'carol', body: { providerId: 'ace-step', style: 'jazz', lyrics: 'smooth', takes: 1 } });
+  assert.equal(r.status, 200);
+  const carolTrackB = (await j(r)).tracks[0].id;
+  await waitForReady('carol');
+  assert.equal((await meOf('carol')).credits, 0, 'carol spent her last credits');
+  r = await req(`/api/tracks/${carolTrackB}/stems`, { method: 'POST', user: 'carol', body: {} });
+  assert.equal(r.status, 402, 'out of credits -> 402 for stems');
+  assert.match((await j(r)).error, /credits/i);
+
+  // ---- studio mixer: NAM capture library ----
+  const namJson = { architecture: 'WaveNet', config: { input_gain: 1 }, weights: [0.1, 0.2, 0.3], version: '1.0' };
+  const namB64 = Buffer.from(JSON.stringify(namJson)).toString('base64');
+  r = await req('/api/nam', { method: 'POST', user: 'carol', noCsrf: true, body: { name: 'My Capture', data: namB64 } });
+  assert.equal(r.status, 403, 'NAM upload needs CSRF');
+  r = await req('/api/nam', { method: 'POST', user: 'carol', body: { name: 'My Capture', data: namB64 } });
+  d = await j(r);
+  assert.equal(r.status, 200, JSON.stringify(d));
+  const capId = d.capture.id;
+  assert.equal(d.capture.name, 'My Capture');
+  assert.ok(d.capture.size > 0);
+
+  d = await j(await req('/api/nam', { user: 'carol' }));
+  assert.equal(d.captures.length, 1, 'one capture listed');
+  assert.equal(d.captures[0].name, 'My Capture');
+  d = await j(await req('/api/nam?q=my', { user: 'carol' }));
+  assert.equal(d.captures.length, 1, 'search matches by name');
+  d = await j(await req('/api/nam?q=zzz-no-match', { user: 'carol' }));
+  assert.equal(d.captures.length, 0, 'search filters');
+
+  // per-user isolation
+  assert.equal((await req('/api/nam/' + capId, { user: 'dave' })).status, 404, 'dave cannot download carol capture');
+  assert.equal((await req('/api/nam/' + capId, { method: 'DELETE', user: 'dave' })).status, 404, 'dave cannot delete carol capture');
+
+  // download round-trips the file
+  r = await req('/api/nam/' + capId, { user: 'carol' });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-disposition'), /attachment/);
+  assert.deepEqual(JSON.parse(await r.text()), namJson, 'downloaded capture matches upload');
+
+  // validation
+  r = await req('/api/nam', { method: 'POST', user: 'carol', body: { name: 'bad', data: Buffer.from('not json').toString('base64') } });
+  assert.equal(r.status, 400, 'non-JSON rejected');
+  r = await req('/api/nam', { method: 'POST', user: 'carol', body: { name: 'bad', data: Buffer.from(JSON.stringify({ foo: 1 })).toString('base64') } });
+  assert.equal(r.status, 400, 'JSON without weights rejected');
+  r = await req('/api/nam', { method: 'POST', user: 'carol', body: { name: 'bad' } });
+  assert.equal(r.status, 400, 'missing data rejected');
+
+  // delete
+  r = await req('/api/nam/' + capId, { method: 'DELETE', user: 'carol' });
+  assert.equal(r.status, 200);
+  assert.equal((await j(await req('/api/nam', { user: 'carol' }))).captures.length, 0, 'capture deleted');
+  assert.equal((await req('/api/nam/' + capId, { method: 'DELETE', user: 'carol' })).status, 404, 'double delete -> 404');
+  assert.equal((await req('/api/nam', { user: 'anon' })).status, 401, 'NAM list needs a session');
 
   // ---- billing disabled without keys: graceful 503s ----
   const dataDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ich-nokey-'));
