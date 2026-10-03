@@ -26,6 +26,9 @@ services:
         sync: false
       - key: DATA_DIR
         value: /var/data
+      # Render serves HTTPS, so mark the session cookie Secure.
+      - key: COOKIE_SECURE
+        value: "1"
     disk:
       name: ice-ice-hammer-data
       mountPath: /var/data
