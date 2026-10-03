@@ -748,7 +748,7 @@ async function handleAudio(req, res, user, id) {
 }
 
 async function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? 'landing.html' : pathname === '/studio' ? 'index.html' : pathname.slice(1);
+  const rel = pathname === '/' ? https://iceicehammer.com : pathname === '/studio' ? 'index.html' : pathname.slice(1);
   const file = path.normalize(path.join(PUBLIC, rel));
   if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, 'Forbidden');
   try {
@@ -759,7 +759,7 @@ async function serveStatic(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   try {
-    const { pathname } = new URL(req.url, 'http://x');
+    const { pathname } = new URL(req.url, https://iceicehammer.com);
     const m = pathname.match(/^\/api\/(tracks|audio)\/([a-f0-9]{16})$/);
     const sm = pathname.match(/^\/api\/tracks\/([a-f0-9]{16})\/stems$/); // stem list + split
     const nm = pathname.match(/^\/api\/nam(?:\/([a-f0-9]{16}))?$/);      // NAM library
