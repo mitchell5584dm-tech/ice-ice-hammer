@@ -112,6 +112,35 @@ in a later phase. Captures are files you provide — each carries its creator's
 license. Live instrument input and the in-browser capture runner are not built
 yet; the library is just storage + listing for now.
 
+## Creator referrals
+
+Each user can generate a referral code (`POST /api/referrals/code`) and share
+the link `/r/CODE`. Visiting the link sets a 90-day attribution cookie and
+redirects to the landing page; a signup with the cookie present is attributed
+to the code owner (no self-referral, one attribution per account, invalid codes
+ignored silently).
+
+**Commission rates (defaults — confirm before launch):**
+- **25%** of subscription payments (initial purchase + renewals), accruing for
+  **12 months** from the referred user's first paid invoice
+- **10%** of one-time credit pack purchases
+- No commission on trial credits; refunds claw back the commission via a
+  negative adjustment (`charge.refunded` webhooks)
+
+Commissions accrue in the Stripe webhook handlers (`invoice.paid`,
+`checkout.session.completed`), idempotent per Stripe event id — a retried
+webhook can never double-pay. Accrual is defensive: a referral bug can never
+break credit grants.
+
+The **Referrals** panel in the UI shows the user's link (copy button), clicks,
+signups, paying subscribers, earnings balance, and paid-out total. Payouts use
+**Stripe Connect Express**: referrers connect an account
+(`GET /api/referrals/connect` onboarding link) and request a payout
+(`POST /api/referrals/payout`) once the balance reaches **$50**. Connect must
+be enabled in the Stripe dashboard for the real onboarding/payout calls;
+`STRIPE_MOCK=1` returns fakes. `GET /api/admin/spend` includes per-referrer
+liabilities (owed / paid / signups).
+
 ## How it talks to the models
 
 Each model names its inputs differently: `tags` or `prompt`, `duration` or `audio_duration`, and so on. `lib/replicate.mjs` reads each model's published input schema and maps the form's style, lyrics, length, seed and instrumental setting onto it, clamped to that model's limits. For example, MusicGen's 30-second cap is applied automatically.
