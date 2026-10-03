@@ -442,6 +442,22 @@ try {
   }
 
   // ---- studio mixer: NAM capture library ----
+{
+  const carol = dbm.getUserByEmail('carol@example.com');
+  const sepId = 'f'.repeat(16);
+  dbm.addCredits(carol.id, 6, 'test-topup');
+  dbm.addCredits(carol.id, -6, 'stems');
+  dbm.addSeparation({ id: sepId, userId: carol.id, trackId: carolTrackB, model: 'ryan5453/demucs', creditsDebited: 6, estCostUsd: 0 });
+  dbm.updateSeparation(sepId, { status: 'processing', replicate_prediction_id: 'predX' });
+  const credBefore = (await meOf('carol')).credits;
+  dbm.updateSeparation(sepId, { status: 'failed', finished_at: Date.now() }); // what failSeparation does first
+  assert.equal(dbm.refundSeparation(sepId), 6, 'failed separation refunds its credits');
+  assert.equal((await meOf('carol')).credits, credBefore + 6, 'credits returned to the user');
+  assert.equal(dbm.refundSeparation(sepId), 0, 'refund happens exactly once');
+  assert.equal(dbm.getSeparation(sepId).status, 'refunded');
+}
+
+// ---- studio mixer: NAM capture library ----
   const namJson = { architecture: 'WaveNet', config: { input_gain: 1 }, weights: [0.1, 0.2, 0.3], version: '1.0' };
   const namB64 = Buffer.from(JSON.stringify(namJson)).toString('base64');
   r = await req('/api/nam', { method: 'POST', user: 'carol', noCsrf: true, body: { name: 'My Capture', data: namB64 } });
