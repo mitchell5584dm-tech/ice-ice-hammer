@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Turn a lyric, a style, or a spark into a finished song with vocals. Make, refine, and keep your music in Ice Ice Hammer Studio.">
+<meta name="theme-color" content="#090d12">
+<title>Ice Ice Hammer — Make the song you hear</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{color-scheme:dark;--bg:#090d12;--panel:#101720;--line:#263341;--fg:#edf4f8;--muted:#9aa9b7;--ice:#a3e1ff;--orange:#ff8b44;--gold:#ffc36a;--body:"Instrument Sans",system-ui,sans-serif;--display:"Big Shoulders Display",Impact,sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 var(--body)}a{color:inherit;text-decoration:none}button{font:inherit}.shell{width:min(1120px,calc(100% - 40px));margin:auto}.topbar{height:76px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #ffffff12}.brand{font:900 25px/.85 var(--display);text-transform:uppercase;letter-spacing:.02em}.brand span{color:var(--ice)}.nav{display:flex;align-items:center;gap:28px;color:var(--muted);font-size:14px}.nav a:hover{color:var(--fg)}.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;border:1px solid var(--line);border-radius:999px;padding:11px 18px;background:#111923;color:var(--fg);font-weight:700;transition:transform .15s,border-color .15s}.btn:hover{transform:translateY(-1px);border-color:#65859c}.btn.hot{color:#1b1009;border:0;background:linear-gradient(180deg,var(--gold),var(--orange));box-shadow:0 8px 30px #ff8b4430}.hero{position:relative;min-height:570px;padding:92px 0 78px;display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;overflow:hidden}.hero:before{content:"";position:absolute;width:600px;height:600px;right:-60px;top:-180px;border-radius:50%;background:radial-gradient(circle,#77cfff19,transparent 67%);pointer-events:none}.eyebrow{font:500 11px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ice)}h1,h2,h3,p{margin-top:0}.hero h1{font:900 clamp(64px,9vw,112px)/.82 var(--display);letter-spacing:-.025em;text-transform:uppercase;margin:22px 0}.hero h1 em{font-style:normal;display:block;color:var(--ice)}.lead{max-width:480px;color:#b4c0ca;font-size:18px;line-height:1.65}.hero-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.under{color:var(--muted);font-size:12px;margin-top:15px}.visual{position:relative;min-height:390px;display:grid;place-items:center}.orbit{position:absolute;width:min(390px,100%);aspect-ratio:1;border:1px solid #a3e1ff20;border-radius:50%;box-shadow:inset 0 0 100px #52b6ff0b,0 0 80px #52b6ff0a}.orbit:before,.orbit:after{content:"";position:absolute;border:1px solid #ffb34722;border-radius:50%;inset:10% -7%;transform:rotate(-25deg)}.orbit:after{inset:23% -14%;transform:rotate(30deg)}.record{position:relative;width:min(270px,70vw);aspect-ratio:1;border-radius:50%;background:repeating-radial-gradient(circle at center,#101820 0 2px,#263541 2.5px 3px,#111821 3.5px 7px);box-shadow:0 32px 70px #000a;border:1px solid #ffffff1a;display:grid;place-items:center;transform:rotate(-12deg)}.record:before{content:"";position:absolute;inset:34%;border-radius:50%;background:linear-gradient(145deg,var(--gold),var(--orange) 55%,#943b24);box-shadow:0 0 24px #ff8b4450}.record:after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:#111;z-index:1}.arm{position:absolute;z-index:2;width:120px;height:9px;right:-62px;top:36px;background:linear-gradient(90deg,#d7e1e8,#687888);border-radius:9px;transform:rotate(43deg);transform-origin:10px center;box-shadow:0 2px 8px #000}.arm:after{content:"";position:absolute;right:-2px;bottom:-5px;width:15px;height:14px;background:var(--ice);border-radius:2px;box-shadow:0 0 14px #a3e1ff66}.note{position:absolute;font:11px var(--mono);color:#b4c4d0;letter-spacing:.1em;text-transform:uppercase}.note.n1{top:28px;left:0}.note.n2{right:-5px;bottom:55px}.note.n3{left:25px;bottom:15px}.wave{display:flex;align-items:center;justify-content:center;gap:4px;height:70px;margin-top:55px}.wave i{display:block;width:4px;height:var(--h);border-radius:9px;background:linear-gradient(var(--ice),#4688ad);opacity:.8}.proof{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:23px 0;display:flex;justify-content:center;gap:clamp(24px,7vw,86px);flex-wrap:wrap;color:var(--muted);font-size:13px}.proof b{color:var(--fg);font-weight:600}.section{padding:90px 0}.section-head{max-width:670px;margin-bottom:36px}.section h2{font:800 clamp(38px,6vw,62px)/.95 var(--display);text-transform:uppercase;margin:12px 0}.section-head p{color:var(--muted);font-size:16px}.features{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.feature{min-height:210px;padding:24px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,#121b25,#0c1219);display:flex;flex-direction:column;justify-content:space-between}.feature .num{font:12px var(--mono);color:var(--ice)}.feature h3{font-size:19px;margin:20px 0 8px}.feature p{font-size:14px;color:var(--muted);margin-bottom:0}.feature .glyph{font-size:24px;color:var(--orange)}.studio-band{padding:26px;border:1px solid #56728755;border-radius:20px;background:linear-gradient(115deg,#112131,#101720 60%,#20180f);display:grid;grid-template-columns:1fr auto;gap:26px;align-items:center}.studio-band h2{font-size:35px;margin:0 0 8px}.studio-band p{color:var(--muted);margin:0;max-width:580px}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.plan{padding:22px;border:1px solid var(--line);border-radius:16px;background:var(--panel);min-height:210px;display:flex;flex-direction:column}.plan.featured{border-color:#7dcdf0;box-shadow:0 0 0 1px #7dcdf033}.plan h3{font:700 25px var(--display);text-transform:uppercase;margin:0 0 5px}.price{font:500 18px var(--mono);color:var(--ice)}.plan p{color:var(--muted);font-size:13px;margin:12px 0 18px}.plan .btn{margin-top:auto;align-self:flex-start;padding:8px 14px;font-size:13px}.plans-note{color:var(--muted);font-size:12px;margin:18px 0 0}.faq{display:grid;grid-template-columns:.8fr 1.2fr;gap:54px}.faq h2{margin-bottom:12px}.faq .intro{color:var(--muted)}.qa{border-top:1px solid var(--line)}.qa details{padding:18px 0;border-bottom:1px solid var(--line)}.qa summary{cursor:pointer;font-weight:600;list-style:none}.qa summary:after{content:"+";float:right;color:var(--ice);font:20px var(--mono)}.qa details[open] summary:after{content:"−"}.qa p{color:var(--muted);font-size:14px;margin:12px 32px 0 0}.footer{border-top:1px solid var(--line);padding:26px 0 38px;color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.footer a{color:var(--fg)}.menu{display:none}.err{color:#ff918b;font-size:13px;margin-top:8px}.loading{color:var(--muted);font-size:13px}.prices-row{display:flex;gap:6px;align-items:baseline}.price-unit{font-size:11px;color:var(--muted)}
+@media(max-width:780px){.hero{grid-template-columns:1fr;gap:10px;padding:68px 0 56px}.hero-copy{position:relative;z-index:2}.visual{min-height:320px}.orbit{width:310px}.record{width:210px}.features{grid-template-columns:1fr 1fr}.faq{grid-template-columns:1fr;gap:14px}.studio-band{grid-template-columns:1fr}.plans{grid-template-columns:1fr}.nav{gap:16px}.section{padding:68px 0}}
+@media(max-width:520px){.shell{width:min(100% - 28px,1120px)}.topbar{height:66px}.nav>a:not(.btn){display:none}.brand{font-size:22px}.hero h1{font-size:68px}.lead{font-size:16px}.visual{min-height:285px}.orbit{width:270px}.record{width:185px}.features{grid-template-columns:1fr}.feature{min-height:168px}.proof{justify-content:flex-start;gap:13px 22px}.proof span{width:calc(50% - 12px)}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="shell topbar">
+  <a class="brand" href="/" aria-label="Ice Ice Hammer home">Ice Ice <span>Hammer</span></a>
+  <nav class="nav" aria-label="Main navigation"><a href="#how">How it works</a><a href="#plans">Plans</a><a class="btn" href="/studio">Sign in</a></nav>
+</header>
+<main>
+  <section class="shell hero">
+    <div class="hero-copy">
+      <div class="eyebrow">Your ideas. Your sound. Your studio.</div>
+      <h1>Hear it.<em>Make it.</em></h1>
+      <p class="lead">Turn a lyric, a style, or a spark into a finished song with vocals. Shape the take, build your library, and keep making.</p>
+      <div class="hero-actions"><a class="btn hot" href="/studio">Open the studio <span aria-hidden="true">↗</span></a><a class="btn" href="#how">See how it works</a></div>
+      <p class="under">Start with an idea. Make two takes. Keep the one that hits.</p>
+    </div>
+    <div class="visual" role="img" aria-label="A glowing record with a sound wave">
+      <div class="orbit"></div><div class="record"><div class="arm"></div></div>
+      <span class="note n1">Lyrics in</span><span class="note n2">Your sound out</span><span class="note n3">01 — Create</span>
+      <div class="wave" aria-hidden="true"><i style="--h:18px"></i><i style="--h:32px"></i><i style="--h:46px"></i><i style="--h:27px"></i><i style="--h:58px"></i><i style="--h:38px"></i><i style="--h:66px"></i><i style="--h:30px"></i><i style="--h:49px"></i><i style="--h:22px"></i><i style="--h:42px"></i><i style="--h:16px"></i></div>
+    </div>
+  </section>
+  <div class="shell proof"><span><b>Write</b> or start from a spark</span><span><b>Choose</b> your sound</span><span><b>Make</b> two takes</span><span><b>Keep</b> your library</span></div>
+
+  <section class="shell section" id="how">
+    <div class="section-head"><div class="eyebrow">From first line to final take</div><h2>Make music your way</h2><p>A focused song studio that gets you from an idea to something you can play, save, and shape again.</p></div>
+    <div class="features">
+      <article class="feature"><span class="num">01 / WRITE</span><div><h3>Start anywhere</h3><p>Bring your own lyrics, draft a starting point, or go instrumental. Name your track when inspiration strikes.</p></div><span class="glyph" aria-hidden="true">✳</span></article>
+      <article class="feature"><span class="num">02 / SHAPE</span><div><h3>Set the sound</h3><p>Describe a genre, mood, tempo, and feel. Pick a model that fits the kind of track you want to make.</p></div><span class="glyph" aria-hidden="true">〰</span></article>
+      <article class="feature"><span class="num">03 / KEEP</span><div><h3>Build your library</h3><p>Compare takes, replay finished songs, download your work, or reuse a recipe to make another variation.</p></div><span class="glyph" aria-hidden="true">◉</span></article>
+    </div>
+  </section>
+
+  <section class="shell"><div class="studio-band"><div><div class="eyebrow">Inside the studio</div><h2>More room to shape your sound.</h2><p>Open a song in the mixer, balance its stems, and export a WAV. Save NAM captures in one searchable library for your gear workflow.</p></div><a class="btn hot" href="/studio">Go to Studio <span aria-hidden="true">↗</span></a></div></section>
+
+  <section class="shell section" id="plans">
+    <div class="section-head"><div class="eyebrow">Straightforward plans</div><h2>Pick your pace</h2><p>Choose a monthly credit plan that fits how often you create. Your current prices load directly from the app.</p></div>
+    <div class="plans" id="planCards"><div class="loading">Loading current plans…</div></div>
+    <p class="plans-note">Credits are used when a generation starts. If it fails, the credits are returned. Longer songs and different models can use different amounts.</p>
+  </section>
+
+  <section class="shell section faq">
+    <div><div class="eyebrow">Good to know</div><h2>Before you press play</h2><p class="intro">A few quick answers about creating and keeping your tracks.</p></div>
+    <div class="qa">
+      <details><summary>Does it sing my lyrics?</summary><p>Choose a model that supports vocals, add your lyrics, and generate a take. Instrumental models are labeled in the studio.</p></details>
+      <details><summary>Can I make another version?</summary><p>Yes. Reuse a finished track's settings or remix it to create another take with a fresh variation.</p></details>
+      <details><summary>Can I work with the result?</summary><p>Download finished tracks, split supported tracks into stems, and open them in the Studio mixer for balancing and WAV export.</p></details>
+      <details><summary>Where do I start?</summary><p>Open the Studio, create an account or sign in, then start with lyrics, a style, or an instrumental idea.</p></details>
+    </div>
+  </section>
+</main>
+<footer class="shell footer"><span>© <span id="year"></span> Ice Ice Hammer</span><span>Make something you want to hear.</span><a href="/studio">Open Studio</a></footer>
+<script>
+document.querySelector('#year').textContent = new Date().getFullYear();
+const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function loadPlans(){
+  const box=document.querySelector('#planCards');
+  try{
+    const res=await fetch('/api/billing/config'); if(!res.ok) throw new Error('Plans are temporarily unavailable.');
+    const data=await res.json(); const plans=data.plans||[];
+    if(!plans.length){box.innerHTML='<p class="loading">Plans will be available soon.</p>';return;}
+    box.innerHTML=plans.map((p,i)=>`<article class="plan${i===1?' featured':''}"><h3>${escapeHtml(p.label)}</h3><div class="prices-row"><span class="price">$${(Number(p.price)/100).toFixed(2)}</span><span class="price-unit">/ month</span></div><p>${Number(p.monthlyCredits).toLocaleString()} credits each month${p.blurb?' · '+escapeHtml(p.blurb):''}</p><a class="btn ${i===1?'hot':''}" href="/studio">${i===1?'Start creating':'Choose '+escapeHtml(p.label)}</a></article>`).join('');
+  }catch(e){box.innerHTML=`<p class="err">${escapeHtml(e.message||'Could not load plans.')}</p>`;}
+}
+loadPlans();
+</script>
+</body>
+</html>
