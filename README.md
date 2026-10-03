@@ -93,6 +93,25 @@ and generation is impossible with a zero balance. `MAX_ACTIVE_GENERATIONS`
 (default 6) is a global backstop; each user is capped at 2 simultaneous
 generations (`USER_MAX_ACTIVE_GENERATIONS`).
 
+## Studio Mixer
+
+Any finished song can be split into stems (vocals, drums, bass, other) with
+**Split stems** in the library. Separation runs on Replicate
+(`ryan5453/demucs`, Demucs `htdemucs`) and costs **6 credits per song** —
+debited before the model runs, refunded if it fails, and never charged twice
+for stems that already exist. Each user can separate 2 songs at once.
+
+**Mix** opens the browser mixer for a song's stems: per-stem volume, pan,
+mute/solo and 3-band EQ, routed through optional sub-buses (Drums, Vox) into
+a master bus with a compressor — all Web Audio API, no dependencies.
+**Export WAV** renders the mix offline and downloads it.
+
+The mixer also hosts your **capture library**: upload `.nam` amp/pedal
+captures (stored per-user, searchable by name) for the instrument input coming
+in a later phase. Captures are files you provide — each carries its creator's
+license. Live instrument input and the in-browser capture runner are not built
+yet; the library is just storage + listing for now.
+
 ## How it talks to the models
 
 Each model names its inputs differently: `tags` or `prompt`, `duration` or `audio_duration`, and so on. `lib/replicate.mjs` reads each model's published input schema and maps the form's style, lyrics, length, seed and instrumental setting onto it, clamped to that model's limits. For example, MusicGen's 30-second cap is applied automatically.
@@ -106,8 +125,8 @@ To add a model, add an entry to `lib/providers.mjs` with its Replicate `owner/na
 | `server.mjs` | Web server, API routes, background job polling, audio streaming |
 | `lib/replicate.mjs` | Replicate API calls and input mapping |
 | `lib/providers.mjs` | The list of models |
-| `lib/db.mjs` | SQLite store: users, per-user tracks, generation ledger, credit transactions |
-| `lib/costs.mjs` | Per-model credit prices and tier model access |
+| `lib/db.mjs` | SQLite store: users, per-user tracks, generation ledger, credit transactions, separations, stems, NAM captures |
+| `lib/costs.mjs` | Per-model credit prices and tier model access (incl. stem-separation price) |
 | `lib/auth.mjs` | scrypt password hashing, signed cookie sessions, verification stub, CSRF tokens |
 | `lib/ratelimit.mjs` | In-memory per-IP sliding-window rate limiter (auth endpoints) |
 | `scripts/migrate-json.mjs` | One-shot migration: old `library.json` → SQLite + per-user audio (`npm run migrate`) |
