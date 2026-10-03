@@ -62,7 +62,7 @@ const app = spawn(process.execPath, ['server.mjs'], {
     REPLICATE_API_BASE: `http://127.0.0.1:${MOCK_PORT}/v1`, POLL_MS: '200',
     SESSION_SECRET: 'test-secret',
     // Stripe billing in mock mode: no network, webhook signatures verified for real.
-    STRIPE_SECRET_KEY: 'sk_test_mock', STRIPE_WEBHOOK_SECRET: 'whsec_test_123', STRIPE_MOCK: '1',
+    STRIPE_SECRET_KEY: 'sk_test_mock', STRIPE_WEBHOOK_SECRET: 'whsec_test_123', STRIPE_MOCK: '1', STRIPE_MOCK_TRANSFER_DELAY_MS: '150',
     STRIPE_PRICE_STARTER: 'price_test_starter', STRIPE_PRICE_CREATOR: 'price_test_creator',
     STRIPE_PRICE_PRO: 'price_test_pro', STRIPE_PRICE_PACK: 'price_test_pack',
     // EMAIL_AUTO_VERIFY is deliberately NOT set: we exercise the verify-link flow.
@@ -617,11 +617,27 @@ try {
   r = await req('/api/referrals/payout', { method: 'POST', user: 'dave' });
   assert.equal(r.status, 400, 'empty balance cannot pay out');
 
+  // concurrent payouts must pay a given balance once, never twice
+  for (let i = 0; i < 23; i++) {
+    r = await postWebhook(evt('evt_ref_race_' + i, 'invoice.paid', {
+      id: 'in_ref_race_' + i, customer: 'cus_test_frank', subscription: 'sub_test_frank',
+      billing_reason: 'subscription_cycle', amount_paid: 899,
+    }));
+    assert.equal(r.status, 200, 'race renewal ' + i + ' accepted');
+  }
+  const raceTotal = 23 * 225;
+  const racers = await Promise.all([1, 2, 3].map(() => req('/api/referrals/payout', { method: 'POST', user: 'dave' })));
+  const raceOk = racers.filter((x) => x.status === 200);
+  assert.equal(raceOk.length, 1, 'exactly one concurrent payout succeeds: ' + racers.map((x) => x.status));
+  const afterRace = await j(await req('/api/referrals/me', { user: 'dave' }));
+  assert.equal(afterRace.paidOutCents, bulkTotal + raceTotal, 'balance paid exactly once');
+  assert.equal(afterRace.balanceCents, 0, 'nothing left unpaid');
+
   // admin spend view includes referral liabilities
   d = await j(await req('/api/admin/spend', { user: 'alice' }));
   const daveLiab = (d.referrals || []).find((x) => x.email === 'dave@example.com');
   assert.ok(daveLiab, 'dave appears in referral liabilities');
-  assert.equal(daveLiab.paid_cents, bulkTotal, 'liability shows paid total');
+  assert.equal(daveLiab.paid_cents, bulkTotal + raceTotal, 'liability shows paid total');
   assert.equal(daveLiab.signups, 1, 'liability shows signup count');
 
   // ---- billing disabled without keys: graceful 503s ----

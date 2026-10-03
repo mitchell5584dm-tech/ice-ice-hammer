@@ -20,7 +20,7 @@ import {
   addStem, getStemForUser, listStemsForTrack, updateStem, removeStemsForTrack, stemStatusForTrack,
   addNamCapture, getNamCapture, listNamCaptures, removeNamCapture,
   createReferralCode, getReferralByCode, recordReferralClick, attributeUser,
-  referralStats, markEarningsPaidOut,
+  referralStats, markEarningsPaidOut, listUnpaidEarnings,
 } from './lib/db.mjs';
 import {
   hashPassword, verifyPassword, signSession, getSessionUserId, parseCookies,
@@ -48,6 +48,13 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
 const AUDIO_MIME = { mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac' };
 
 // ---------- helpers ----------
+// Best-effort cancel: a Replicate error must never abort a delete, a poll
+// tick, or server startup.
+async function safeCancel(predictionId) {
+  try { await cancelPrediction(predictionId); }
+  catch (e) { console.warn(`cancel ${predictionId}:`, e.message); }
+}
+
 // Baseline security headers on every response. Cache-Control is set per
 // route: 'no-store' for all API responses (they carry per-user data),
 // 'no-cache' for the HTML shell (revalidate each load), and
@@ -327,14 +334,14 @@ function failSeparation(userId, separationId, error) {
 // The track's mixed audio goes to the model as a data URI: /api/audio URLs are
 // login-walled, so a public URL is not an option. Guard the size so one huge
 // file can't blow up the prediction JSON.
-function audioDataUri(userId, audioFile) {
+async function audioDataUri(userId, audioFile) {
   const file = path.join(AUDIO_DIR, userId, audioFile);
-  const stat = fs.statSync(file);
+  const stat = await fsp.stat(file);
   const MAX_BYTES = 32 * 1024 * 1024;
   if (stat.size > MAX_BYTES) throw Object.assign(new Error('This song file is too large to separate (32 MB limit).'), { status: 400 });
   const ext = path.extname(audioFile).slice(1).toLowerCase();
   const mime = AUDIO_MIME[ext] || 'audio/mpeg';
-  const b64 = fs.readFileSync(file).toString('base64');
+  const b64 = (await fsp.readFile(file)).toString('base64');
   return `data:${mime};base64,${b64}`;
 }
 
@@ -342,7 +349,7 @@ async function startSeparation(user, track, separation) {
   try {
     const info = await getModelInfo(STEM_MODEL);
     const input = buildSeparationInput(info, {
-      audioDataUri: audioDataUri(user.id, track.audioFile),
+      audioDataUri: await audioDataUri(user.id, track.audioFile),
       modelName: STEM_MODEL_VARIANT,
     });
     const pred = await createPrediction({ model: STEM_MODEL }, input);
@@ -390,20 +397,23 @@ async function handleStemSeparation(req, res, user, trackId) {
   if (listActiveSeparations().length + listActiveTracks().length >= MAX_ACTIVE)
     return send(res, 429, { error: 'The server is busy. Try again in a minute.' });
 
-  // THE choke point: debit BEFORE any Replicate call. 402 when broke.
+  // THE choke point: debit BEFORE any Replicate call. 402 when broke. The debit
+  // and the rows that justify it commit together, so a failed insert rolls the
+  // debit back instead of silently losing credits.
+  let separation;
   try {
-    addCredits(user.id, -STEM_SEPARATION_CREDITS, 'stems');
+    separation = transact(() => {
+      addCredits(user.id, -STEM_SEPARATION_CREDITS, 'stems');
+      const sep = addSeparation({
+        id: newId(), userId: user.id, trackId: track.id, model: STEM_MODEL,
+        creditsDebited: STEM_SEPARATION_CREDITS, estCostUsd: STEM_SEPARATION_CREDITS * EST_USD_PER_CREDIT,
+      });
+      for (const name of STEM_NAMES) addStem({ id: newId(), userId: user.id, trackId: track.id, separationId: sep.id, name });
+      return sep;
+    });
   } catch (e) {
     return send(res, e.status || 500, { error: e.status === 402 ? `Out of credits (${user.credits} left, stem splitting needs ${STEM_SEPARATION_CREDITS}).` : e.message });
   }
-
-  const separation = addSeparation({
-    id: newId(), userId: user.id, trackId: track.id, model: STEM_MODEL,
-    creditsDebited: STEM_SEPARATION_CREDITS, estCostUsd: STEM_SEPARATION_CREDITS * EST_USD_PER_CREDIT,
-  });
-  const stems = transact(() => STEM_NAMES.map((name) =>
-    addStem({ id: newId(), userId: user.id, trackId: track.id, separationId: separation.id, name })
-  ));
   await startSeparation(user, track, separation);
   const sep = getSeparation(separation.id);
   const failed = sep.status === 'failed'; // synchronous failure: already refunded
@@ -549,21 +559,34 @@ async function handleReferralConnect(req, res, user) {
 // POST /api/referrals/payout — pay out the unpaid balance (>= $50 threshold)
 // to the referrer's connected Express account. The Stripe transfer is created
 // first; earnings are marked paid after it succeeds.
+// One payout per user at a time (single-process server), plus a Stripe
+// idempotency key derived from the exact earnings being claimed, so a double
+// click or a retry can never create a second transfer for the same earnings.
+const payoutsInFlight = new Set();
 async function handleReferralPayout(req, res, user) {
-  const stats = referralStats(user.id);
-  if (stats.balanceCents < REFERRAL_PAYOUT_THRESHOLD_CENTS) {
-    return send(res, 400, {
-      error: `Your balance is $${(stats.balanceCents / 100).toFixed(2)} — payouts need at least $${(REFERRAL_PAYOUT_THRESHOLD_CENTS / 100).toFixed(2)}.`,
-    });
-  }
+  if (payoutsInFlight.has(user.id)) return send(res, 409, { error: 'A payout is already in progress.' });
+  payoutsInFlight.add(user.id);
   try {
-    const transfer = await createPayoutTransfer({ user: getUserById(user.id), amountCents: stats.balanceCents });
-    const marked = markEarningsPaidOut(user.id, transfer.id);
-    const paidTotal = marked.reduce((s, e) => s + e.amount_cents, 0);
+    const claimed = listUnpaidEarnings(user.id);
+    const balanceCents = claimed.reduce((n, e) => n + e.amount_cents, 0);
+    if (balanceCents < REFERRAL_PAYOUT_THRESHOLD_CENTS) {
+      return send(res, 400, {
+        error: `Your balance is $${(balanceCents / 100).toFixed(2)} — payouts need at least $${(REFERRAL_PAYOUT_THRESHOLD_CENTS / 100).toFixed(2)}.`,
+      });
+    }
+    const ids = claimed.map((e) => e.id);
+    const idempotencyKey = 'payout-' + user.id + '-' + crypto.createHash('sha256').update(ids.join(',')).digest('hex').slice(0, 32);
+    const transfer = await createPayoutTransfer({ user: getUserById(user.id), amountCents: balanceCents, idempotencyKey });
+    // Mark exactly the rows that were transferred; earnings that accrued while
+    // the transfer was in flight stay unpaid for the next payout.
+    const marked = markEarningsPaidOut(user.id, transfer.id, ids);
+    const paidTotal = marked.reduce((n, e) => n + e.amount_cents, 0);
     console.log(`[referrals] payout $${(paidTotal / 100).toFixed(2)} to ${user.email} (transfer ${transfer.id})`);
     return send(res, 200, { ok: true, transferId: transfer.id, amountCents: paidTotal });
   } catch (e) {
     return send(res, e.status || 500, { error: e.message });
+  } finally {
+    payoutsInFlight.delete(user.id);
   }
 }
 
@@ -574,7 +597,7 @@ async function pollOnce() {
     for (const t of listActiveTracks()) {
       try {
         if (Date.now() - t.createdAt > GIVE_UP_MS) {
-          await cancelPrediction(t.predictionId);
+          await safeCancel(t.predictionId);
           failTrack(t.userId, t.id, 'Timed out after 25 minutes.');
           continue;
         }
@@ -597,7 +620,7 @@ async function pollOnce() {
     for (const s of listActiveSeparations()) {
       try {
         if (Date.now() - s.created_at > GIVE_UP_MS) {
-          await cancelPrediction(s.replicate_prediction_id);
+          await safeCancel(s.replicate_prediction_id);
           failSeparation(s.user_id, s.id, 'Timed out after 25 minutes.');
           continue;
         }
@@ -692,32 +715,34 @@ async function handleGenerate(req, res, user) {
   // ElevenLabs bills per second of audio — cap it on every plan that can use it.
   if (provider.id === 'elevenlabs' && duration > ELEVENLABS_MAX_DURATION) duration = ELEVENLABS_MAX_DURATION;
 
-  // THE choke point: debit BEFORE any Replicate call. 402 when broke.
   const total = costFor(provider.id, takes, duration);
-  try {
-    addCredits(user.id, -total, 'generation');
-  } catch (e) {
-    return send(res, e.status || 500, { error: e.status === 402 ? `Out of credits (${user.credits} left, this needs ${total}).` : e.message });
-  }
-
   const title = clean(body.title, LIMITS.title).trim() || autoTitle(provider.vocals && !instrumental ? lyrics : '', style);
   const baseSeed = Number.isFinite(Number(body.seed)) && body.seed !== '' && body.seed != null ? Number(body.seed) : crypto.randomInt(1, 2 ** 31 - 1);
   const now = Date.now();
   const made = [];
-  transact(() => {
-    for (let k = 0; k < takes; k++) {
-      const t = addTrack(user.id, {
-        id: newId(), title, style, lyrics, instrumental, duration,
-        seed: (baseSeed + k * 7919) % (2 ** 31 - 1),
-        providerId: provider.id, take: takes > 1 ? 'AB'[k] : null, status: 'queued', createdAt: now + k,
-      });
-      addLedgerEntry({
-        id: cryptoId(), userId: user.id, trackId: t.id, providerId: provider.id, model: provider.model,
-        creditsDebited: costFor(provider.id, 1, duration), estCostUsd: estUsdFor(provider.id, 1),
-      });
-      made.push(t);
-    }
-  });
+  // THE choke point: debit BEFORE any Replicate call. 402 when broke. The debit
+  // and the track/ledger rows commit together: if any insert fails the debit
+  // rolls back, so credits can never be taken without a track to refund against.
+  try {
+    transact(() => {
+      addCredits(user.id, -total, 'generation');
+      for (let k = 0; k < takes; k++) {
+        const t = addTrack(user.id, {
+          id: newId(), title, style, lyrics, instrumental, duration,
+          seed: (baseSeed + k * 7919) % (2 ** 31 - 1),
+          providerId: provider.id, take: takes > 1 ? 'AB'[k] : null, status: 'queued', createdAt: now + k,
+        });
+        addLedgerEntry({
+          id: cryptoId(), userId: user.id, trackId: t.id, providerId: provider.id, model: provider.model,
+          creditsDebited: costFor(provider.id, 1, duration), estCostUsd: estUsdFor(provider.id, 1),
+        });
+        made.push(t);
+      }
+    });
+  } catch (e) {
+    made.length = 0;
+    return send(res, e.status || 500, { error: e.status === 402 ? `Out of credits (${user.credits} left, this needs ${total}).` : e.message });
+  }
   await Promise.all(made.map((t) => startTake(user, t, provider)));
   send(res, 200, { tracks: made.map((t) => publicTrack(getTrack(user.id, t.id))) });
 }
@@ -811,14 +836,14 @@ const server = http.createServer(async (req, res) => {
       const t = getTrack(user.id, m[2]);
       if (!t) return send(res, 404, { error: 'Not found' });
       const wasQueued = t.status === 'queued';
-      if (t.status === 'generating' && t.predictionId) await cancelPrediction(t.predictionId);
+      if (t.status === 'generating' && t.predictionId) await safeCancel(t.predictionId);
       // Cancel any in-flight separation and remove its stems (files + rows).
       for (const s of listStemsForTrack(user.id, t.id)) {
         if (s.audioFile) await fsp.rm(path.join(AUDIO_DIR, user.id, s.audioFile), { force: true });
       }
       removeStemsForTrack(user.id, t.id);
       for (const s of listStuckSeparations().filter((x) => x.user_id === user.id && x.track_id === t.id)) {
-        if (s.replicate_prediction_id) await cancelPrediction(s.replicate_prediction_id);
+        if (s.replicate_prediction_id) await safeCancel(s.replicate_prediction_id);
         updateSeparation(s.id, { status: 'failed', finished_at: Date.now() });
         refundSeparation(s.id);
       }
@@ -861,12 +886,12 @@ const server = http.createServer(async (req, res) => {
 initDb();
 // Tracks left mid-generation by a restart are failed AND refunded (no result, no charge).
 for (const t of listStuckTracks()) {
-  if (t.status === 'generating' && t.predictionId) await cancelPrediction(t.predictionId);
+  if (t.status === 'generating' && t.predictionId) await safeCancel(t.predictionId);
   failTrack(t.userId, t.id, 'Server restarted before this job finished.');
 }
 // Same for stem separations left mid-run.
 for (const s of listStuckSeparations()) {
-  if (s.replicate_prediction_id) await cancelPrediction(s.replicate_prediction_id);
+  if (s.replicate_prediction_id) await safeCancel(s.replicate_prediction_id);
   failSeparation(s.user_id, s.id, 'Server restarted before this separation finished.');
 }
 setInterval(pollOnce, POLL_MS).unref();
