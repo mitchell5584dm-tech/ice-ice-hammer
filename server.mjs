@@ -44,7 +44,7 @@ const POLL_MS = Number(process.env.POLL_MS || 4000);
 const GIVE_UP_MS = 25 * 60 * 1000;
 
 const LIMITS = { style: 1000, lyrics: 5000, title: 80, email: 254, password: 128 };
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4' };
 const AUDIO_MIME = { mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac' };
 
 // ---------- helpers ----------
@@ -778,7 +778,17 @@ async function serveStatic(req, res, pathname) {
   if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, 'Forbidden');
   try {
     const data = await fsp.readFile(file);
-    send(res, 200, data, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    const type = MIME[path.extname(file)] || 'application/octet-stream';
+    // Audio samples need byte ranges (Safari refuses to play audio without them).
+    const range = type.startsWith('audio/') && req.headers.range && req.headers.range.match(/^bytes=(\d*)-(\d*)$/);
+    if (range && (range[1] || range[2])) {
+      let start = range[1] ? Number(range[1]) : data.length - Number(range[2]);
+      let end = range[1] && range[2] ? Number(range[2]) : data.length - 1;
+      start = Math.max(0, start); end = Math.min(data.length - 1, end);
+      if (start > end) return send(res, 416, '', { 'Content-Range': `bytes */${data.length}` });
+      return send(res, 206, data.subarray(start, end + 1), { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${data.length}`, 'Cache-Control': 'no-cache' });
+    }
+    send(res, 200, data, { 'Content-Type': type, 'Cache-Control': 'no-cache', ...(type.startsWith('audio/') ? { 'Accept-Ranges': 'bytes' } : {}) });
   } catch { send(res, 404, 'Not found'); }
 }
 
